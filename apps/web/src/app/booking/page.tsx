@@ -4,6 +4,11 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 
+// --- ADD THIS CONSTANT AT THE TOP ---
+const API_BASE_URL = process.env.NODE_ENV === "production" 
+  ? "https://vectorpropertymaintenance.onrender.com" 
+  : "http://localhost:8080";
+
 type TimeSlot = "Morning (8AM - 12PM)" | "Afternoon (12PM - 4PM)" | "Evening (4PM - 8PM)";
 
 interface Booking {
@@ -58,7 +63,7 @@ export default function BookingPage() {
   // Fetch all bookings from the server
   const fetchBookings = async () => {
     try {
-      const response = await fetch("http://localhost:8080/api/schedule");
+      const response = await fetch(`${API_BASE_URL}/api/schedule`);
       if (response.ok) {
         const data = await response.json();
         setBookedSlots(data);
@@ -90,7 +95,8 @@ export default function BookingPage() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch("http://localhost:8080/api/book", {
+      // USE THE CONSTANT HERE
+      const response = await fetch(`${API_BASE_URL}/api/book`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

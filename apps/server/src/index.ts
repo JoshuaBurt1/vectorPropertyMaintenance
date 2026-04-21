@@ -46,7 +46,27 @@ testConnection();
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-app.use(cors());
+// --- MIDDLEWARE ---
+const allowedOrigins = [
+  "http://localhost:3000",          // Local Next.js
+  "https://vectorpm-df058.web.app", // Your live site
+  "https://vectorpm-df058.firebaseapp.com" // Backup Firebase URL
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile or Postman)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+}));
+
 app.use(express.json());
 
 // GET SCHEDULES ENDPOINT
@@ -112,7 +132,12 @@ app.get("/health", (req, res) => {
   res.json({ status: "API is running, scheduler is active." });
 });
 
+const isProd = process.env.NODE_ENV === "production";
+const SERVER_URL = isProd 
+  ? "https://vectorpropertymaintenance.onrender.com" 
+  : `http://localhost:${PORT}`;
+
 app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
-  console.log(`📡 Health check: http://localhost:${PORT}/health`);
+  console.log(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+  console.log(`📡 Health check: ${SERVER_URL}/health`);
 });
