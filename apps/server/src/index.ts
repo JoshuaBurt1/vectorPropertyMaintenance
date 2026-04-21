@@ -1,21 +1,32 @@
 //server/src/index.ts
 
+import "dotenv/config"; // Load .env for local development
 import express, { Request, Response } from "express";
 import cors from "cors";
 import cron from "node-cron";
 import * as admin from "firebase-admin";
 import path from "path";
 
-const serviceAccountPath = path.resolve(__dirname, "../service-account.json");
+// --- FIREBASE INITIALIZATION ---
+let serviceAccount;
 
-// Initialize Firebase Admin
+if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+  // Use the environment variable on Render
+  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+} else {
+  // Fall back to local file for localhost development
+  // Ensure the path is correct relative to the compiled 'dist' folder
+  const serviceAccountPath = path.resolve(__dirname, "../service-account.json");
+  serviceAccount = require(serviceAccountPath);
+}
+
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccountPath),
+  credential: admin.credential.cert(serviceAccount),
   databaseURL: "https://vectorpm-df058.firebaseio.com" 
 });
 
 const db = admin.firestore();
-console.log("✅ VectorPM Firebase Admin connected via Service Account");
+console.log("✅ VectorPM Firebase Admin connected");
 
 // Test writing a piece of data to your new DB
 const testConnection = async () => {
