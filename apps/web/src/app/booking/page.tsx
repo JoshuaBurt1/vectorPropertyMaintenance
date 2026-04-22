@@ -28,18 +28,16 @@ export default function BookingPage() {
   const [days, setDays] = useState<Date[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<{ date: Date; time: TimeSlot } | null>(null);
-  
-  // State to hold booked slots fetched from the server
   const [bookedSlots, setBookedSlots] = useState<Booking[]>([]);
-  
   const [formData, setFormData] = useState({
     name: "",
     address: "",
+    email: "", 
     service: "Grass Cutting",
   });
-  
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [showWarmingUp, setShowWarmingUp] = useState(false);
 
   const timeSlots: TimeSlot[] = [
     "Morning (8AM - 12PM)",
@@ -72,6 +70,12 @@ export default function BookingPage() {
   // Fetch all bookings from the server
   const fetchBookings = async () => {
     setIsLoading(true);
+    
+    // Start a 2-second timer
+    const warmingTimer = setTimeout(() => {
+      setShowWarmingUp(true);
+    }, 2000);
+
     try {
       const response = await fetch(`${API_BASE_URL}/api/schedule`);
       if (response.ok) {
@@ -81,7 +85,10 @@ export default function BookingPage() {
     } catch (error) {
       console.error("Failed to fetch schedule data:", error);
     } finally {
+      // Clear timer and reset states
+      clearTimeout(warmingTimer);
       setIsLoading(false);
+      setShowWarmingUp(false);
     }
   };
 
@@ -122,7 +129,7 @@ export default function BookingPage() {
 
       alert("Booking and payment confirmed successfully!");
       setIsModalOpen(false);
-      setFormData({ name: "", address: "", service: "Grass Cutting" });
+      setFormData({ name: "", address: "", email: "", service: "Grass Cutting" });
       
       fetchBookings(); 
     } catch (error) {
@@ -134,7 +141,7 @@ export default function BookingPage() {
   };
 
   // Check if form is filled out before allowing payment
-  const isFormValid = formData.name.trim() !== "" && formData.address.trim() !== "";
+  const isFormValid = formData.name.trim() !== "" && formData.address.trim() !== "" && formData.email.includes("@");
 
   return (
     // Wrap the entire component (or just the app) in the PayPal Provider
@@ -154,9 +161,21 @@ export default function BookingPage() {
             ← Back to Home
           </Link>
 
-          <header className="mb-10">
-            <h1 className="text-4xl font-bold tracking-tight mb-2">Schedule Service</h1>
-            <p className="text-zinc-600">Click on a schedule block to book your time.</p>
+          <header className="mb-10 flex justify-between items-start">
+            <div>
+              <h1 className="text-4xl font-bold tracking-tight mb-2">Schedule Service</h1>
+              <p className="text-zinc-600">Click on a schedule block to book your time.</p>
+            </div>
+            
+            {showWarmingUp && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 text-amber-700 rounded-full text-sm animate-pulse">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                </span>
+                Server Warming Up...
+              </div>
+            )}
           </header>
 
           {/* Calendar Controls */}
@@ -248,6 +267,18 @@ export default function BookingPage() {
                 </div>
 
                 <div>
+                  <label className="block text-sm font-medium mb-1">Email Address</label>
+                  <input
+                    required
+                    type="email"
+                    placeholder="for your confirmation receipt"
+                    className="w-full border border-zinc-300 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-black"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  />
+                </div>
+
+                <div>
                   <label className="block text-sm font-medium mb-1">Service Requirement</label>
                   <select
                     className="w-full border border-zinc-300 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-black"
@@ -276,7 +307,7 @@ export default function BookingPage() {
                 <div className="mt-4 flex flex-col gap-3">
                   {!isFormValid ? (
                     <div className="text-center p-3 bg-zinc-100 text-zinc-500 rounded-lg text-sm border border-zinc-200">
-                      Please fill out your Name and Address to proceed with payment.
+                      Please fill out your Name, Address, and Email to proceed.
                     </div>
                   ) : (
                     <div className="min-h-37.5">

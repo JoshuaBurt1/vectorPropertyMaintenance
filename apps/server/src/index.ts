@@ -1,11 +1,12 @@
 //server/src/index.ts
 
-import "dotenv/config"; // Load .env for local development
+import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors from "cors";
 import cron from "node-cron";
 import * as admin from "firebase-admin";
 import path from "path";
+import nodemailer from "nodemailer";
 
 let serviceAccount;
 
@@ -52,6 +53,14 @@ const allowedOrigins = [
   "https://vector-property-maintenance.web.app"
 ];
 
+const transporter = nodemailer.createTransport({
+  service: "gmail", 
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile or Postman)
@@ -86,20 +95,20 @@ app.get("/api/schedule", async (req: Request, res: Response) => {
   }
 });
 
-// NEW BOOKING ENDPOINT
+// BOOKING ENDPOINT
 app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, address, service, date, timeSlot } = req.body;
+    const { name, email, address, service, date, timeSlot } = req.body;
 
-    // Basic validation
-    if (!name || !address || !service || !date || !timeSlot) {
+    if (!name || !email || !address || !service || !date || !timeSlot) {
       res.status(400).json({ error: "Missing required booking fields." });
       return;
     }
 
-    // Write to Firestore under the 'schedule' collection
+    // 1. First, save to Firestore (This is the most important part)
     const newBookingRef = await db.collection("schedule").add({
       name,
+      email,
       address,
       service,
       date,
@@ -108,10 +117,47 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    console.log(`[BOOKING] New schedule created. DocID: ${newBookingRef.id}`);
+    console.log(`[BOOKING] Document created: ${newBookingRef.id}`);
+
+    // 2. Wrap Email in a separate try/catch so it doesn't break the response
+    try {
+      const formattedDate = new Date(date).toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+
+      const mailOptions = {
+        from: `"Vector Property Maintenance" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: `Booking Confirmed: ${service}`,
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; color: #333;">
+            <h2>Booking Confirmation</h2>
+            <p>Hi <b>${name}</b>,</p>
+            <p>We've received your request for <b>${service}</b>.</p>
+            <hr />
+            <p><b>Date:</b> ${formattedDate}</p>
+            <p><b>Time Window:</b> ${timeSlot}</p>
+            <p><b>Location:</b> ${address}</p>
+            <hr />
+            <p>Best regards,<br/>The Vector Team</p>
+          </div>
+        `,
+      };
+
+      await transporter.sendMail(mailOptions);
+      console.log(`[EMAIL] Sent to ${email}`);
+    } catch (emailError) {
+      console.error("❌ Failed to send confirmation email:", emailError);
+    }
+
+    // 3. Always return success if the DB write worked
     res.status(201).json({ success: true, documentId: newBookingRef.id });
+    
   } catch (error) {
-    console.error("Error creating booking:", error);
+    console.error("❌ Critical error during booking:", error);
     res.status(500).json({ error: "Internal server error during booking." });
   }
 });
