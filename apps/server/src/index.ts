@@ -7,7 +7,6 @@ import cron from "node-cron";
 import * as admin from "firebase-admin";
 import path from "path";
 
-// --- FIREBASE INITIALIZATION ---
 let serviceAccount;
 
 if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
@@ -15,7 +14,6 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 } else {
   // Fall back to local file for localhost development
-  // Ensure the path is correct relative to the compiled 'dist' folder
   const serviceAccountPath = path.resolve(__dirname, "../service-account.json");
   serviceAccount = require(serviceAccountPath);
 }
@@ -48,9 +46,9 @@ const PORT = process.env.PORT || 8080;
 
 // --- MIDDLEWARE ---
 const allowedOrigins = [
-  "http://localhost:3000",          // Local Next.js
-  "https://vectorpm-df058.web.app", // Your live site
-  "https://vectorpm-df058.firebaseapp.com", // Backup Firebase URL
+  "http://localhost:3000",                    // Local Next.js
+  "https://vectorpm-df058.web.app",           // live site
+  "https://vectorpm-df058.firebaseapp.com",   // Backup Firebase URL
   "https://vector-property-maintenance.web.app"
 ];
 
@@ -70,8 +68,7 @@ app.use(cors({
 
 app.use(express.json());
 
-// GET SCHEDULES ENDPOINT
-// This reads the database so the frontend knows which slots are taken.
+// GET SCHEDULES ENDPOINT: reads the database so the frontend knows which slots are taken.
 app.get("/api/schedule", async (req: Request, res: Response) => {
   try {
     const snapshot = await db.collection("schedule").get();

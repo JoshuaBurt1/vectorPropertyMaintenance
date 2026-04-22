@@ -4,10 +4,16 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 
-// --- ADD THIS CONSTANT AT THE TOP ---
 const API_BASE_URL = process.env.NODE_ENV === "production" 
   ? "https://vectorpropertymaintenance.onrender.com" 
   : "http://localhost:8080";
+
+  const SkeletonSlot = () => (
+    <div className="p-4 border border-zinc-200 rounded-xl h-24 bg-white animate-pulse flex flex-col justify-between">
+      <div className="h-4 w-20 bg-zinc-200 rounded" />
+      <div className="h-3 w-16 bg-zinc-100 rounded" />
+    </div>
+  );
 
 type TimeSlot = "Morning (8AM - 12PM)" | "Afternoon (12PM - 4PM)" | "Evening (4PM - 8PM)";
 
@@ -15,6 +21,7 @@ interface Booking {
   date: string;
   timeSlot: string;
 }
+
 
 export default function BookingPage() {
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(new Date());
@@ -31,6 +38,8 @@ export default function BookingPage() {
     service: "Grass Cutting",
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Inside BookingPage function
+  const [isLoading, setIsLoading] = useState(true); // Default to true
 
   const timeSlots: TimeSlot[] = [
     "Morning (8AM - 12PM)",
@@ -62,6 +71,7 @@ export default function BookingPage() {
 
   // Fetch all bookings from the server
   const fetchBookings = async () => {
+    setIsLoading(true); // Start loading
     try {
       const response = await fetch(`${API_BASE_URL}/api/schedule`);
       if (response.ok) {
@@ -70,6 +80,8 @@ export default function BookingPage() {
       }
     } catch (error) {
       console.error("Failed to fetch schedule data:", error);
+    } finally {
+      setIsLoading(false); // Stop loading regardless of success/fail
     }
   };
 
@@ -154,13 +166,20 @@ export default function BookingPage() {
         <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
           {days.map((day, index) => (
             <div key={index} className="flex flex-col gap-3">
+              {/* Day Header */}
               <div className="text-center pb-2 border-b border-zinc-200">
                 <div className="font-bold">{day.toLocaleDateString('en-US', { weekday: 'short' })}</div>
                 <div className="text-sm text-zinc-500">{day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
               </div>
               
+              {/* Time Slots or Skeletons */}
               {timeSlots.map((time) => {
-                // Compare local date strings to avoid ISO timezone offset issues
+                // 1. Show Skeleton if loading
+                if (isLoading) {
+                  return <SkeletonSlot key={time} />;
+                }
+
+                // 2. Logic for actual buttons
                 const isBooked = bookedSlots.some(
                   (b) => new Date(b.date).toDateString() === day.toDateString() && b.timeSlot === time
                 );
@@ -172,8 +191,8 @@ export default function BookingPage() {
                     onClick={() => handleBlockClick(day, time)}
                     className={`p-4 text-left text-sm border rounded-xl h-24 flex flex-col justify-between transition-all ${
                       isBooked 
-                        ? "bg-zinc-200/50 border-zinc-200 text-zinc-400 cursor-not-allowed" // Booked styling
-                        : "bg-white border-zinc-200 hover:border-black hover:shadow-md"     // Available styling
+                        ? "bg-zinc-200/50 border-zinc-200 text-zinc-400 cursor-not-allowed"
+                        : "bg-white border-zinc-200 hover:border-black hover:shadow-md"
                     }`}
                   >
                     <span className={`font-medium ${isBooked ? "line-through text-zinc-400" : "text-zinc-700"}`}>
