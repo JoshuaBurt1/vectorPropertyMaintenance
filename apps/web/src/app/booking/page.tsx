@@ -1,4 +1,4 @@
-//src/app/booking/page.tsx
+//web/src/app/booking/page.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";

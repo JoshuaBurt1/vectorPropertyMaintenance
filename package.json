@@ -7,6 +7,7 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
+    "deploy:web": "pnpm --filter web build && firebase deploy --only hosting:main-site",
     "mobile:android": "pnpm --filter mobile exec expo run:android --variant release"
   },
   "keywords": [],
