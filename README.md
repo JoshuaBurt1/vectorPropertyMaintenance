@@ -9,6 +9,4 @@ Monorepo architechture:
 
 ## Getting Started
 
-server: https://vectorpropertymaintenance.onrender.com/
-
-front-end: https://vectorpm-df058.web.app
+https://vectorpm-df058.web.app

@@ -19,7 +19,7 @@ export default function Home() {
 
       <main className="max-w-4xl mx-auto px-8 py-20 text-center sm:text-left">
         <div className="inline-block px-3 py-1 mb-6 text-xs font-semibold tracking-widest uppercase bg-zinc-100 rounded-full">
-          Professional Cleaning Services
+          Professional Property Maintenance and Custodial Services
         </div>
         
         {/* Updated H2 with Typewriter */}

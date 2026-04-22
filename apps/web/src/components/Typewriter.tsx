@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 
-const words = ["home.", "office.", "garage.", "garden.", "front yard.", "backroom.", "parking lot."];
+const words = ["home.", "office.", "garage.", "warehouse.", "garden.", "front yard.", "backroom.", "parking lot."];
 
 export default function Typewriter() {
   const [index, setIndex] = useState(0);

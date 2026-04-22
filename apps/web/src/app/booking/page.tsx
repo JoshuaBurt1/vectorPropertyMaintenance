@@ -38,7 +38,7 @@ export default function BookingPage() {
     "Evening (4PM - 8PM)",
   ];
 
-  const services = ["Grass Cutting", "Leave Pick-up", "Wood Removal", "Landscaping"];
+  const services = ["Grass Cutting", "Leaf & Wood Removal", "Pool Cleaning", "Residential Cleaning", "Warehouse Cleaning"];
 
   // Initialize the week starting from Sunday
   useEffect(() => {

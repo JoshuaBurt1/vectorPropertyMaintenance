@@ -3,10 +3,8 @@ import { StyleSheet, SafeAreaView, StatusBar, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 export default function App() {
-  // REPLACE THIS with your computer's IPv4 address for local testing
-  // You can find it by running 'ipconfig' in PowerShell
   const DEV_URL = 'http://192.168.1.15:3000'; 
-  const PROD_URL = 'https://vector-property.vercel.app'; // Future production link
+  const PROD_URL = 'https://vectorpm-df058.web.app/';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -14,9 +12,7 @@ export default function App() {
       <WebView 
         source={{ uri: __DEV__ ? DEV_URL : PROD_URL }} 
         style={styles.webview}
-        // Allows the app to handle "back" swipes/buttons
         allowsBackForwardNavigationGestures
-        // Shows a loading indicator on first load
         startInLoadingState
       />
     </SafeAreaView>
