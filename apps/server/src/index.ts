@@ -50,7 +50,8 @@ const PORT = process.env.PORT || 8080;
 const allowedOrigins = [
   "http://localhost:3000",          // Local Next.js
   "https://vectorpm-df058.web.app", // Your live site
-  "https://vectorpm-df058.firebaseapp.com" // Backup Firebase URL
+  "https://vectorpm-df058.firebaseapp.com", // Backup Firebase URL
+  "https://vector-property-maintenance.web.app"
 ];
 
 app.use(cors({

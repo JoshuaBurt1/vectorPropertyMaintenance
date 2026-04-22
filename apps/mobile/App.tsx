@@ -4,7 +4,7 @@ import { WebView } from 'react-native-webview';
 
 export default function App() {
   const DEV_URL = 'http://192.168.1.15:3000'; 
-  const PROD_URL = 'https://vectorpm-df058.web.app/';
+  const PROD_URL = "https://vector-property-maintenance.web.app";
 
   return (
     <SafeAreaView style={styles.container}>
