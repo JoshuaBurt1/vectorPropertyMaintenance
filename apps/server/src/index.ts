@@ -1,5 +1,3 @@
-//server/src/index.ts
-
 import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors from "cors";
@@ -11,7 +9,7 @@ import nodemailer from "nodemailer";
 let serviceAccount;
 
 if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-  // Use the environment variable on Render
+  // Use the environment variable
   serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 } else {
   // Fall back to local file for localhost development
@@ -80,13 +78,21 @@ app.use(express.json());
 // GET SCHEDULES ENDPOINT: reads the database so the frontend knows which slots are taken.
 app.get("/api/schedule", async (req: Request, res: Response) => {
   try {
-    const snapshot = await db.collection("schedule").get();
+    // Only fetching dates from today onwards to save read costs
+    const todayStr = new Date().toISOString().split('T')[0];
+    const snapshot = await db.collection("schedule")
+      .where("dateString", ">=", todayStr)
+      .get();
     
-    // send the dates and timeSlots to the frontend to block them out
-    const bookings = snapshot.docs.map(doc => ({
-      date: doc.data().date,
-      timeSlot: doc.data().timeSlot
-    }));
+    // send the dates, timeSlots, and fullness count to the frontend
+    const bookings = snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        date: data.dateString,
+        timeSlot: data.timeSlot,
+        count: data.bookings ? data.bookings.length : 0
+      };
+    });
 
     res.status(200).json(bookings);
   } catch (error) {
@@ -98,26 +104,51 @@ app.get("/api/schedule", async (req: Request, res: Response) => {
 // BOOKING ENDPOINT
 app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, email, address, service, date, timeSlot } = req.body;
+    const { name, email, address, location, service, date, timeSlot } = req.body;
 
-    if (!name || !email || !address || !service || !date || !timeSlot) {
+    if (!name || !email || !address || !location || !service || !date || !timeSlot) {
       res.status(400).json({ error: "Missing required booking fields." });
       return;
     }
 
-    // 1. First, save to Firestore (This is the most important part)
-    const newBookingRef = await db.collection("schedule").add({
-      name,
-      email,
-      address,
-      service,
-      date,
-      timeSlot,
-      status: "pending",
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    const dateObj = new Date(date);
+    const dateString = dateObj.toISOString().split('T')[0]; // "YYYY-MM-DD"
+    const slotSlug = timeSlot.split(' ')[0]; // extracts "Morning", "Afternoon", or "Evening"
+    const documentId = `${dateString}_${slotSlug}`; // Efficient document ID
+
+    // 1. Transaction to ensure we never exceed 2 bookings per slot concurrently
+    await db.runTransaction(async (t) => {
+      const slotRef = db.collection("schedule").doc(documentId);
+      const doc = await t.get(slotRef);
+      
+      let currentBookings = [];
+      if (doc.exists) {
+        currentBookings = doc.data()?.bookings || [];
+        if (currentBookings.length >= 2) {
+          throw new Error("SLOT_FULL");
+        }
+      }
+
+      currentBookings.push({
+        name,
+        name_lowercase: name.toLowerCase(),
+        email,
+        address,
+        location,
+        service,
+        originalDate: date,
+        status: "pending",
+        createdAt: new Date().toISOString()
+      });
+
+      t.set(slotRef, {
+        dateString,
+        timeSlot,
+        bookings: currentBookings
+      }, { merge: true });
     });
 
-    console.log(`[BOOKING] Document created: ${newBookingRef.id}`);
+    console.log(`[BOOKING] Slot updated: ${documentId}`);
 
     // 2. Wrap Email in a separate try/catch so it doesn't break the response
     try {
@@ -141,6 +172,7 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
             <p><b>Date:</b> ${formattedDate}</p>
             <p><b>Time Window:</b> ${timeSlot}</p>
             <p><b>Location:</b> ${address}</p>
+            <p><b>Geocoordinate:</b> ${location}</p>
             <hr />
             <p>Best regards,<br/>The Vector Team</p>
           </div>
@@ -154,9 +186,13 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
     }
 
     // 3. Always return success if the DB write worked
-    res.status(201).json({ success: true, documentId: newBookingRef.id });
+    res.status(201).json({ success: true, documentId });
     
-  } catch (error) {
+  } catch (error: any) {
+    if (error.message === "SLOT_FULL") {
+      res.status(409).json({ error: "This time slot is already fully booked." });
+      return;
+    }
     console.error("❌ Critical error during booking:", error);
     res.status(500).json({ error: "Internal server error during booking." });
   }
@@ -164,9 +200,34 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
 
 // Scheduling Task: Runs every 15 minutes
 cron.schedule("*/15 * * * *", async () => {
-  console.log("Running scheduled task every 15 minutes...");
+  console.log("Running scheduled archiving task...");
   try {
-    console.log("Database checked and schedules updated.");
+    const todayStr = new Date().toISOString().split('T')[0];
+    
+    // Find all schedule documents where the date is strictly before today
+    const snapshot = await db.collection("schedule")
+      .where("dateString", "<", todayStr)
+      .get();
+
+    if (snapshot.empty) {
+      return;
+    }
+
+    const batch = db.batch();
+
+    snapshot.docs.forEach((doc) => {
+      const data = doc.data();
+      const completedRef = db.collection("completedWorkOrders").doc(doc.id);
+      
+      // Copy to completedWorkOrders
+      batch.set(completedRef, data);
+      
+      // Delete from schedule
+      batch.delete(doc.ref);
+    });
+
+    await batch.commit();
+    console.log(`Successfully archived ${snapshot.size} past schedule documents.`);
   } catch (error) {
     console.error("Error running cron task:", error);
   }
