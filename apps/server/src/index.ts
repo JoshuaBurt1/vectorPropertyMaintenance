@@ -7,6 +7,69 @@ import * as admin from "firebase-admin";
 import path from "path";
 import nodemailer from "nodemailer";
 
+// ROUTE OPTIMIZATION LOGIC
+
+const HOME_BASE = { lat: 44.3894, lng: -79.6903 };
+
+function getDistance(p1: { lat: number; lng: number }, p2: { lat: number; lng: number }) {
+  const R = 6371;
+  const dLat = (p2.lat - p1.lat) * (Math.PI / 180);
+  const dLon = (p2.lng - p1.lng) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(p1.lat * (Math.PI / 180)) * Math.cos(p2.lat * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+async function optimizeDayRoute(dateString: string) {
+  const slots = ["Morning", "Afternoon", "Evening"];
+  const batch = db.batch();
+  
+  // Start the day at the shop
+  let currentPos = HOME_BASE;
+  let totalDistance = 0;
+
+  for (const slot of slots) {
+    const docId = `${dateString}_${slot}`;
+    const docRef = db.collection("schedule").doc(docId);
+    const doc = await docRef.get();
+
+    if (doc.exists) {
+      const data = doc.data();
+      const bookings = data?.bookings || [];
+
+      if (bookings.length > 0) {
+        // 1. Sort the bookings by distance from the worker's current location
+        bookings.sort((a: any, b: any) => {
+          const distA = getDistance(currentPos, { lat: a.location[0], lng: a.location[1] });
+          const distB = getDistance(currentPos, { lat: b.location[0], lng: b.location[1] });
+          return distA - distB;
+        });
+
+        // 2. Accumulate distance and update currentPos for each booking
+        for (const b of bookings) {
+          const bLoc = { lat: b.location[0], lng: b.location[1] };
+          totalDistance += getDistance(currentPos, bLoc);
+          currentPos = bLoc;
+        }
+
+        // 3. Add the sorted array to our update batch
+        batch.update(docRef, { bookings });
+      }
+    }
+  }
+
+  // 4. Update the daily log with the total projected distance
+  const logRef = db.collection("daily_log").doc(dateString);
+  //totalDistance += getDistance(currentPos, HOME_BASE); // distance back to HOME_BASE
+  batch.set(logRef, { 
+    distance: Number(totalDistance.toFixed(2)) 
+  }, { merge: true });
+
+  await batch.commit();
+}
+
 let serviceAccount;
 
 if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
@@ -26,7 +89,7 @@ admin.initializeApp({
 const db = admin.firestore();
 console.log("✅ VectorPM Firebase Admin connected");
 
-// Test writing a piece of data to your new DB
+// Test writing a piece of data to DB
 const testConnection = async () => {
   try {
     await db.collection('system_checks').add({
@@ -44,11 +107,11 @@ testConnection();
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// --- MIDDLEWARE ---
+// MIDDLEWARE
 const allowedOrigins = [
-  "http://localhost:3000",                    // Local Next.js
-  "https://vectorpm-df058.web.app",           // live site
-  "https://vectorpm-df058.firebaseapp.com",   // Backup Firebase URL
+  "http://localhost:3000",
+  "https://vectorpm-df058.web.app",
+  "https://vectorpm-df058.firebaseapp.com",
   "https://vector-property-maintenance.web.app"
 ];
 
@@ -110,7 +173,7 @@ app.get("/api/schedule/stream", (req, res) => {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
-  // Add this user to our notification list
+  // Add this user to notification list
   clients.push(res);
 
   // Remove them when they close the tab
@@ -137,7 +200,7 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
     const dateObj = new Date(date);
     const dateString = dateObj.toISOString().split('T')[0]; // "YYYY-MM-DD"
     const slotSlug = timeSlot.split(' ')[0]; // extracts "Morning", "Afternoon", or "Evening"
-    const documentId = `${dateString}_${slotSlug}`; // Efficient document ID
+    const documentId = `${dateString}_${slotSlug}`; // document ID
 
     // 1. Transaction to ensure we never exceed 2 bookings per slot concurrently
     await db.runTransaction(async (t) => {
@@ -171,7 +234,9 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
       }, { merge: true });
     });
 
-    console.log(`[BOOKING] Slot updated: ${documentId}`);
+    await optimizeDayRoute(dateString);
+
+    console.log(`[BOOKING] Slot updated & Route Optimized: ${documentId}`);
     broadcastUpdate({ type: "REFRESH_SCHEDULE", documentId });
 
     // 2. Wrap Email in a separate try/catch so it doesn't break the response
@@ -222,7 +287,7 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// Scheduling Task: Runs every 15 minutes
+// Scheduling Task: Runs every 15 minutes (this could be every 4 hours)
 cron.schedule("*/15 * * * *", async () => {
   console.log("Running scheduled archiving task...");
   try {
