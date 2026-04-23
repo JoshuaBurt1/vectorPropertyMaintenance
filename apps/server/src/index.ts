@@ -1,3 +1,4 @@
+//server/src/index.ts
 import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors from "cors";
@@ -77,6 +78,7 @@ app.use(express.json());
 
 // GET SCHEDULES ENDPOINT: reads the database so the frontend knows which slots are taken.
 app.get("/api/schedule", async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
   try {
     // Only fetching dates from today onwards to save read costs
     const todayStr = new Date().toISOString().split('T')[0];
@@ -100,6 +102,27 @@ app.get("/api/schedule", async (req: Request, res: Response) => {
     res.status(500).json({ error: "Internal server error fetching schedule." });
   }
 });
+
+let clients: Response[] = [];
+
+app.get("/api/schedule/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  // Add this user to our notification list
+  clients.push(res);
+
+  // Remove them when they close the tab
+  req.on("close", () => {
+    clients = clients.filter(client => client !== res);
+  });
+});
+
+// Create a function to shout to everyone
+const broadcastUpdate = (data: any) => {
+  clients.forEach(client => client.write(`data: ${JSON.stringify(data)}\n\n`));
+};
 
 // BOOKING ENDPOINT
 app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
@@ -149,6 +172,7 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
     });
 
     console.log(`[BOOKING] Slot updated: ${documentId}`);
+    broadcastUpdate({ type: "REFRESH_SCHEDULE", documentId });
 
     // 2. Wrap Email in a separate try/catch so it doesn't break the response
     try {

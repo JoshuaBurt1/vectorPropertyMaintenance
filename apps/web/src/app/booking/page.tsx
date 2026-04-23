@@ -5,6 +5,7 @@ import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { PayPalScriptProvider, PayPalButtons } from "@paypal/react-paypal-js";
 import dynamic from 'next/dynamic';
+import 'leaflet/dist/leaflet.css';
 
 const API_BASE_URL = process.env.NODE_ENV === "production" 
   ? "https://vectorpropertymaintenance.onrender.com" 
@@ -13,6 +14,14 @@ const API_BASE_URL = process.env.NODE_ENV === "production"
 const OPENCAGE_API_KEY = process.env.NEXT_PUBLIC_OPENCAGE_API_KEY;
 const HOME_BASE = { lat: 44.3894, lng: -79.6903 }; 
 const MAX_RADIUS_KM = 100;
+
+// Outside or inside component body:
+const getStartOfWeek = (date: Date) => {
+  const d = new Date(date);
+  d.setDate(d.getDate() - d.getDay());
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
 
 const SkeletonSlot = () => (
   <div className="p-4 border border-zinc-200 rounded-xl h-24 bg-white animate-pulse flex flex-col justify-between">
@@ -50,7 +59,7 @@ const Circle = dynamic(() => import('react-leaflet').then(mod => mod.Circle), { 
 import { useMap, useMapEvents } from "react-leaflet";
 
 export default function BookingPage() {
-  const [currentWeekStart, setCurrentWeekStart] = useState<Date>(new Date());
+  const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() => getStartOfWeek(new Date()));
   const [days, setDays] = useState<Date[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<{ date: Date; time: TimeSlot } | null>(null);
@@ -90,11 +99,24 @@ export default function BookingPage() {
   const isAtMinWeek = currentWeekStart.getTime() <= startOfActualWeek.getTime();
 
   useEffect(() => {
+    const eventSource = new EventSource(`${API_BASE_URL}/api/schedule/stream`);
+
+    eventSource.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === "REFRESH_SCHEDULE") {
+        fetchBookings();
+      }
+    };
+
+    return () => eventSource.close();
+  }, []);
+
+  useEffect(() => {
     setMounted(true);
-    // Fix Leaflet icons in Next.js
+    
+    // Fix Leaflet icons
     if (typeof window !== 'undefined') {
       import('leaflet').then((L) => {
-        import('leaflet/dist/leaflet.css');
         delete (L.Icon.Default.prototype as any)._getIconUrl;
         L.Icon.Default.mergeOptions({
           iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -103,12 +125,6 @@ export default function BookingPage() {
         });
       });
     }
-
-    const today = new Date();
-    const start = new Date(today);
-    start.setDate(today.getDate() - today.getDay());
-    start.setHours(0, 0, 0, 0);
-    setCurrentWeekStart(start);
   }, []);
 
   useEffect(() => {
@@ -183,19 +199,23 @@ export default function BookingPage() {
         }),
       });
 
+      const result = await response.json();
+
       if (!response.ok) {
+        // This is what happened in your screenshot
         if (response.status === 409) {
-            throw new Error("This slot just filled up. Please select another.");
+            alert("CRITICAL: Payment went through but the slot was taken. Please contact us immediately for a refund or manual booking.");
+            return;
         }
-        throw new Error("Failed to book");
+        throw new Error(result.error || "Failed to book");
       }
 
-      alert("Booking and payment confirmed successfully!");
+      alert("Booking confirmed!");
       closeModal();
-      fetchBookings(); 
+      fetchBookings(); // Force refresh immediately after booking
     } catch (error: any) {
       console.error(error);
-      alert(error.message || "Payment was successful, but there was an error saving your booking. Please contact support.");
+      alert(error.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -270,9 +290,16 @@ export default function BookingPage() {
   // Component to fly to user location when it changes
   const MapUpdater = ({ center }: { center: { lat: number; lng: number } }) => {
     const map = useMap();
+
     useEffect(() => {
       if (map) {
         map.setView([center.lat, center.lng], map.getZoom());
+
+        const timer = setTimeout(() => {
+          map.invalidateSize();
+        }, 600); 
+
+        return () => clearTimeout(timer);
       }
     }, [center, map]);
     
@@ -375,7 +402,7 @@ export default function BookingPage() {
                       fullnessClass = "text-blue-600 font-semibold";
                   } else if (fullnessCount === 1) {
                       statusLabel = "50% Full";
-                      fullnessClass = "text-amber-600";
+                      fullnessClass = "text-teal-600";
                   } else if (isPastDay || isPastSlot) {
                       statusLabel = "Unavailable";
                       fullnessClass = "text-zinc-400";
@@ -419,33 +446,34 @@ export default function BookingPage() {
               {/* Dynamic Map Area */}
               {isMapVisible && mounted && (
                 <div className="hidden md:block w-1/2 bg-zinc-100 relative z-0">
-                   <MapContainer 
-                      center={[userLocation?.lat || HOME_BASE.lat, userLocation?.lng || HOME_BASE.lng]} 
-                      zoom={userLocation ? 11 : 8} 
-                      style={{ height: "100%", width: "100%" }}
-                    >
-                      <TileLayer
-                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                      />
-                      
-                      {/* Home Base & Service Radius */}
-                      <Marker position={[HOME_BASE.lat, HOME_BASE.lng]} />
-                      <Circle 
-                        center={[HOME_BASE.lat, HOME_BASE.lng]} 
-                        radius={MAX_RADIUS_KM * 1000} // Leaflet takes meters
-                        pathOptions={{ color: 'blue', fillColor: 'blue', fillOpacity: 0.1 }}
-                      />
+                  <MapContainer 
+                    key={isMapVisible ? "map-expanded" : "map-collapsed"} // Forces a fresh render
+                    center={[userLocation?.lat || HOME_BASE.lat, userLocation?.lng || HOME_BASE.lng]} 
+                    zoom={userLocation ? 11 : 8} 
+                    style={{ height: "100%", width: "100%" }}
+                  >
+                    <TileLayer
+                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+                    
+                    {/* Home Base & Service Radius */}
+                    <Marker position={[HOME_BASE.lat, HOME_BASE.lng]} />
+                    <Circle 
+                      center={[HOME_BASE.lat, HOME_BASE.lng]} 
+                      radius={MAX_RADIUS_KM * 1000} // Leaflet takes meters
+                      pathOptions={{ color: 'blue', fillColor: 'blue', fillOpacity: 0.1 }}
+                    />
 
-                      {/* User Selected Location */}
-                      {userLocation && (
-                        <Marker position={[userLocation.lat, userLocation.lng]} />
-                      )}
+                    {/* User Selected Location */}
+                    {userLocation && (
+                      <Marker position={[userLocation.lat, userLocation.lng]} />
+                    )}
 
-                      {/* Map Controls */}
-                      <MapClickHandler />
-                      {userLocation && <MapUpdater center={userLocation} />}
-                    </MapContainer>
+                    {/* Map Controls */}
+                    <MapClickHandler />
+                    {userLocation && <MapUpdater center={userLocation} />}
+                  </MapContainer>
                 </div>
               )}
 
