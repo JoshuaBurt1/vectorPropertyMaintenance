@@ -1,10 +1,9 @@
 //m_w/App.tsx
-
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { auth, db } from './firebaseConfig';
-import { doc, onSnapshot, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot, collection, query, where, getDocs } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { format } from 'date-fns';
 
@@ -25,9 +24,13 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         try {
-          const workerDoc = await getDoc(doc(db, 'workers', user.uid));
-          if (workerDoc.exists()) {
-            setWorker(workerDoc.data());
+          const q = query(collection(db, 'admin_workers'), where('uid', '==', user.uid));
+          const querySnapshot = await getDocs(q);
+          
+          if (!querySnapshot.empty) {
+            setWorker(querySnapshot.docs[0].data());
+          } else {
+             setWorker(null);
           }
         } catch (error) {
           console.error("Error fetching worker profile:", error);
@@ -43,37 +46,27 @@ export default function App() {
 
   // 2. Real-time Route Listening (onSnapshot)
   useEffect(() => {
-    if (!worker?.name) return;
+    // We need the worker's email to filter their specific routes
+    if (!worker?.email) return;
 
     const dateStr = format(new Date(), 'yyyy-MM-dd');
-    const periods = ['Morning', 'Afternoon', 'Evening'];
     
-    // Listen to the daily worker schedule to see if they are assigned
+    // Listen directly to today's document in admin_workersSchedule
     const scheduleRef = doc(db, 'admin_workersSchedule', dateStr);
     
     const unsubscribeSchedule = onSnapshot(scheduleRef, (scheduleSnap) => {
-      if (scheduleSnap.exists() && scheduleSnap.data().workers?.includes(worker.name)) {
+      if (scheduleSnap.exists()) {
+        const data = scheduleSnap.data();
+        const allAssignedRoutes = data.assignedRoute || [];
         
-        // If assigned, setup listeners for each time period's route
-        const unsubscribers = periods.map((period) => {
-          const docRef = doc(db, 'schedule', `${dateStr}_${period}`);
-          
-          return onSnapshot(docRef, (docSnap) => {
-            if (docSnap.exists()) {
-              const newData = docSnap.data().bookings || []; // Assuming your field name is 'bookings'
-              
-              setRouteData((prev) => {
-                // Filter out old data for this specific period and replace with fresh data
-                const otherPeriods = prev.filter(item => item.period !== period);
-                const periodData = newData.map((b: any) => ({ ...b, period }));
-                return [...otherPeriods, ...periodData];
-              });
-            }
-          });
-        });
-
-        return () => unsubscribers.forEach(unsub => unsub());
+        // Filter the array to only include jobs assigned to the logged-in worker's email
+        const workerSpecificRoutes = allAssignedRoutes.filter(
+          (job: any) => job.email === worker.email
+        );
+        
+        setRouteData(workerSpecificRoutes);
       } else {
+        // If there is no document for today, clear the route data
         setRouteData([]);
       }
     });

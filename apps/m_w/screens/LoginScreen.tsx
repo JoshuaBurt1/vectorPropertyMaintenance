@@ -1,12 +1,22 @@
 // m_w/screens/LoginScreen.tsx
 
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
-import { auth, db } from '../firebaseConfig'; // Ensure db is exported from your config
+import { 
+  View, 
+  Text, 
+  TextInput, 
+  TouchableOpacity, 
+  StyleSheet, 
+  Alert, 
+  KeyboardAvoidingView, 
+  Platform, 
+  TouchableWithoutFeedback, 
+  Keyboard 
+} from 'react-native';
+import { auth, db } from '../firebaseConfig'; 
 import { signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 
-// Add onLogin to the props destructuring
 export default function LoginScreen({ navigation, onLogin }: any) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -17,16 +27,14 @@ export default function LoginScreen({ navigation, onLogin }: any) {
     
     setLoading(true);
     try {
-      // 1. Authenticate the user
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // 2. Fetch the worker's profile from Firestore to get their name
-      const workerDoc = await getDoc(doc(db, 'workers', user.uid));
+      const q = query(collection(db, 'admin_workers'), where('uid', '==', user.uid));
+      const querySnapshot = await getDocs(q);
       
-      if (workerDoc.exists()) {
-        const workerData = workerDoc.data();
-        // 3. Trigger the state change in App.tsx
+      if (!querySnapshot.empty) {
+        const workerData = querySnapshot.docs[0].data();
         onLogin(workerData); 
       } else {
         Alert.alert("Error", "Worker profile not found in database.");
@@ -37,40 +45,86 @@ export default function LoginScreen({ navigation, onLogin }: any) {
       setLoading(false);
     }
   };
-
+  
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Worker Login</Text>
-      <TextInput 
-        style={styles.input} 
-        placeholder="Email" 
-        value={email} 
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-      />
-      <TextInput 
-        style={styles.input} 
-        placeholder="Password" 
-        value={password} 
-        onChangeText={setPassword} 
-        secureTextEntry 
-      />
-      <TouchableOpacity 
-        style={[styles.button, { opacity: loading ? 0.7 : 1 }]} 
-        onPress={handleLogin}
-        disabled={loading}
-      >
-        <Text style={styles.buttonText}>{loading ? "Logging in..." : "Login"}</Text>
-      </TouchableOpacity>
-    </View>
+    // KeyboardAvoidingView ensures the UI shifts up when the keyboard appears
+    <KeyboardAvoidingView 
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={styles.container}
+    >
+      {/* TouchableWithoutFeedback allows tapping away to dismiss the keyboard */}
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <View style={styles.inner}>
+          <Text style={styles.title}>Worker Login</Text>
+          
+          <TextInput 
+            style={styles.input} 
+            placeholder="Email" 
+            value={email} 
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
+          
+          <TextInput 
+            style={styles.input} 
+            placeholder="Password" 
+            value={password} 
+            onChangeText={setPassword} 
+            secureTextEntry 
+          />
+          
+          <TouchableOpacity 
+            style={[styles.button, { opacity: loading ? 0.7 : 1 }]} 
+            onPress={handleLogin}
+            disabled={loading}
+          >
+            <Text style={styles.buttonText}>{loading ? "Logging in..." : "Login"}</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableWithoutFeedback>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: '#fff' },
-  title: { fontSize: 28, fontWeight: 'bold', marginBottom: 30, textAlign: 'center' },
-  input: { borderWidth: 1, borderColor: '#ddd', padding: 15, borderRadius: 10, marginBottom: 15 },
-  button: { backgroundColor: '#3498db', padding: 15, borderRadius: 10, alignItems: 'center' },
-  buttonText: { color: '#fff', fontWeight: 'bold', fontSize: 16 }
+  container: { 
+    flex: 1, 
+    backgroundColor: '#fff' 
+  },
+  inner: {
+    flex: 1,
+    padding: 20,
+    // Changed from 'center' to 'flex-start' to move elements up
+    justifyContent: 'flex-start', 
+    // Added paddingTop to position the title comfortably at the top
+    paddingTop: 100, 
+  },
+  title: { 
+    fontSize: 28, 
+    fontWeight: 'bold', 
+    marginBottom: 40, 
+    textAlign: 'center',
+    color: '#2c3e50'
+  },
+  input: { 
+    borderWidth: 1, 
+    borderColor: '#ddd', 
+    padding: 15, 
+    borderRadius: 10, 
+    marginBottom: 15,
+    backgroundColor: '#f9f9f9'
+  },
+  button: { 
+    backgroundColor: '#3498db', 
+    padding: 15, 
+    borderRadius: 10, 
+    alignItems: 'center',
+    marginTop: 10
+  },
+  buttonText: { 
+    color: '#fff', 
+    fontWeight: 'bold', 
+    fontSize: 16 
+  }
 });
