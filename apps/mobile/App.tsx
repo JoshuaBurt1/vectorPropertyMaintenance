@@ -1,3 +1,5 @@
+//mobile/App.tsx
+
 import React from 'react';
 import { StyleSheet, SafeAreaView, StatusBar, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
