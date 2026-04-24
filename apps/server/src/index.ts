@@ -287,6 +287,77 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+// ADMIN ENDPOINT: Create a new Field Worker account
+app.post("/api/admin/create-worker", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, fullName, phoneNumber } = req.body;
+
+    // Basic validation
+    if (!email || !fullName) {
+      res.status(400).json({ error: "Email and Full Name are required." });
+      return;
+    }
+
+    // 1. Generate a temporary password
+    const temporaryPassword = `Vector${Math.floor(1000 + Math.random() * 9000)}!`;
+
+    // 2. Create the user in Firebase Auth
+    const userRecord = await admin.auth().createUser({
+      email,
+      password: temporaryPassword,
+      displayName: fullName,
+      phoneNumber: phoneNumber || undefined,
+    });
+
+    // 3. Initialize the Worker Profile in Firestore
+    await db.collection("workers").doc(userRecord.uid).set({
+      uid: userRecord.uid,
+      name: fullName,
+      email: email,
+      role: "field_worker",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      assignedRoutes: []
+    });
+
+    // 4. Send Invitation Email
+    try {
+      const mailOptions = {
+        from: `"Vector Admin" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: "Welcome to Vector Property Maintenance - Worker Account Created",
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; color: #333;">
+            <h2>Welcome to the Team, ${fullName}!</h2>
+            <p>Your worker account has been created. You can now log in to the Mobile App.</p>
+            <hr />
+            <p><b>Login Email:</b> ${email}</p>
+            <p><b>Temporary Password:</b> <code style="background: #eee; padding: 2px 5px;">${temporaryPassword}</code></p>
+            <hr />
+            <p><i>Please change your password immediately after your first login.</i></p>
+            <p>Best regards,<br/>Vector Management</p>
+          </div>
+        `,
+      };
+
+      await transporter.sendMail(mailOptions);
+      console.log(`[ADMIN] Invitation sent to ${email}`);
+    } catch (emailError) {
+      console.error("❌ Worker created, but invitation email failed:", emailError);
+    }
+
+    res.status(201).json({ 
+      success: true, 
+      message: "Worker account created and invitation sent.",
+      uid: userRecord.uid 
+    });
+
+  } catch (error: any) {
+    console.error("❌ Error creating worker account:", error);
+    res.status(500).json({ error: error.message || "Failed to create worker account." });
+  }
+});
+
 // Scheduling Task: Runs every 15 minutes (this could be every 4 hours)
 cron.schedule("*/15 * * * *", async () => {
   console.log("Running scheduled archiving task...");
