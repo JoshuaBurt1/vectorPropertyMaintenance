@@ -1,4 +1,4 @@
-//mobile_worker/screens/CameraScreen.tsx
+//m_w/screens/CameraScreen.tsx
 
 import React, { useState } from 'react';
 import { View, TouchableOpacity, Image, Text, StyleSheet, ScrollView, Alert } from 'react-native';

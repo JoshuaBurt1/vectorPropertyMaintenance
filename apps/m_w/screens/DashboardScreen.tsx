@@ -1,4 +1,4 @@
-//mobile_worker/screens/DashboardScreen.tsx
+//m_w/screens/DashboardScreen.tsx
 
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList } from 'react-native';

@@ -1,4 +1,4 @@
-//mobile_worker/App.tsx
+//m_w/App.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';

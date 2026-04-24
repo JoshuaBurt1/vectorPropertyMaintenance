@@ -1,4 +1,4 @@
-//mobile_worker/screens/LoginScreen.tsx
+//m_w/screens/LoginScreen.tsx
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { auth } from '../firebaseConfig';
