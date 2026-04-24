@@ -15,6 +15,11 @@ const OPENCAGE_API_KEY = process.env.NEXT_PUBLIC_OPENCAGE_API_KEY;
 const HOME_BASE = { lat: 44.3894, lng: -79.6903 }; 
 const MAX_RADIUS_KM = 100;
 
+const MapView = dynamic(() => import("./BookingMap"), { 
+  ssr: false,
+  loading: () => <div className="h-full w-full bg-zinc-100 animate-pulse" />
+});
+
 // Outside or inside component body:
 const getStartOfWeek = (date: Date) => {
   const d = new Date(date);
@@ -293,11 +298,13 @@ export default function BookingPage() {
 
     useEffect(() => {
       if (map) {
+        map.invalidateSize();
+        
         map.setView([center.lat, center.lng], map.getZoom());
 
         const timer = setTimeout(() => {
           map.invalidateSize();
-        }, 600); 
+        }, 1000); 
 
         return () => clearTimeout(timer);
       }
@@ -379,11 +386,17 @@ export default function BookingPage() {
                 {timeSlots.map((time) => {
                   if (isLoading) return <SkeletonSlot key={time} />;
 
-                  const isPastDay = day < today;
+                  // Normalize both to date strings to avoid time/timezone math issues
+                  const dayStr = day.toDateString();
+                  const todayStr = new Date().toDateString();
+
+                  const isPastDay = day.getTime() < today.getTime();
                   const currentHour = new Date().getHours();
                   let isPastSlot = false;
-                  
-                  if (day.toDateString() === today.toDateString()) {
+
+                  if (dayStr === todayStr) {
+                    // Flag slots as past based on the current hour (EDT/Local)
+                    // Morning starts at 8AM (8), Afternoon at 12PM (12), Evening at 4PM (16)
                     if (time.startsWith("Morning") && currentHour >= 8) isPastSlot = true;
                     if (time.startsWith("Afternoon") && currentHour >= 12) isPastSlot = true;
                     if (time.startsWith("Evening") && currentHour >= 16) isPastSlot = true;
@@ -391,21 +404,29 @@ export default function BookingPage() {
 
                   const fullnessCount = getSlotFullness(day, time);
                   const isFullyBooked = fullnessCount >= 2;
-                  
                   const isUnavailable = isFullyBooked || isPastDay || isPastSlot;
+
+                  const isPast = isPastDay || isPastSlot;
 
                   let statusLabel = "0% Full";
                   let fullnessClass = "text-emerald-600";
 
-                  if (isFullyBooked) {
-                      statusLabel = "100% Full";
-                      fullnessClass = "text-blue-600 font-semibold";
+                  if (isPast) {
+                    // If it's in the past, we don't care how full it was
+                    statusLabel = "Unavailable";
+                    fullnessClass = "text-zinc-400";
+                  } else if (isFullyBooked) {
+                    // If it's in the future but full
+                    statusLabel = "100% Full";
+                    fullnessClass = "text-blue-600 font-semibold";
                   } else if (fullnessCount === 1) {
-                      statusLabel = "50% Full";
-                      fullnessClass = "text-teal-600";
-                  } else if (isPastDay || isPastSlot) {
-                      statusLabel = "Unavailable";
-                      fullnessClass = "text-zinc-400";
+                    // If it's in the future and half-full
+                    statusLabel = "50% Full";
+                    fullnessClass = "text-teal-600";
+                  } else {
+                    // Available
+                    statusLabel = "0% Full";
+                    fullnessClass = "text-emerald-600";
                   }
 
                   return (
@@ -419,7 +440,7 @@ export default function BookingPage() {
                           : "bg-white border-zinc-200 hover:border-black hover:shadow-md"
                       }`}
                     >
-                      <span className={`font-medium ${isUnavailable && !isFullyBooked ? "line-through text-zinc-400" : "text-zinc-700"}`}>
+                      <span className={`font-medium ${(isPastDay || isPastSlot) ? "line-through text-zinc-400" : "text-zinc-700"}`}>
                         {time.split(" ")[0]}
                       </span>
                       <div className="flex flex-col gap-1">
@@ -445,35 +466,12 @@ export default function BookingPage() {
               
               {/* Dynamic Map Area */}
               {isMapVisible && mounted && (
-                <div className="hidden md:block w-1/2 bg-zinc-100 relative z-0">
-                  <MapContainer 
-                    key={isMapVisible ? "map-expanded" : "map-collapsed"} // Forces a fresh render
-                    center={[userLocation?.lat || HOME_BASE.lat, userLocation?.lng || HOME_BASE.lng]} 
-                    zoom={userLocation ? 11 : 8} 
-                    style={{ height: "100%", width: "100%" }}
-                  >
-                    <TileLayer
-                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    />
-                    
-                    {/* Home Base & Service Radius */}
-                    <Marker position={[HOME_BASE.lat, HOME_BASE.lng]} />
-                    <Circle 
-                      center={[HOME_BASE.lat, HOME_BASE.lng]} 
-                      radius={MAX_RADIUS_KM * 1000} // Leaflet takes meters
-                      pathOptions={{ color: 'blue', fillColor: 'blue', fillOpacity: 0.1 }}
-                    />
-
-                    {/* User Selected Location */}
-                    {userLocation && (
-                      <Marker position={[userLocation.lat, userLocation.lng]} />
-                    )}
-
-                    {/* Map Controls */}
-                    <MapClickHandler />
-                    {userLocation && <MapUpdater center={userLocation} />}
-                  </MapContainer>
+                <div className="hidden md:block w-1/2 bg-zinc-100 relative">
+                  <MapView 
+                    userLocation={userLocation}
+                    homeBase={HOME_BASE}
+                    radius={MAX_RADIUS_KM}
+                  />
                 </div>
               )}
 

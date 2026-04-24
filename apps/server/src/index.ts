@@ -146,7 +146,7 @@ app.get("/api/schedule", async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
     // Only fetching dates from today onwards to save read costs
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = new Date().toLocaleDateString('en-CA');
     const snapshot = await db.collection("schedule")
       .where("dateString", ">=", todayStr)
       .get();
@@ -244,6 +244,7 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
         location,
         service,
         originalDate: date,
+        transactionId: req.body.transactionId,
         status: "pending",
         createdAt: new Date().toISOString()
       });
