@@ -291,6 +291,8 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
 
 // ADMIN ENDPOINT: Create a new Field Worker account
 app.post("/api/admin/create-worker", async (req: Request, res: Response): Promise<void> => {
+  console.log("Incoming Headers:", req.headers['content-type']);
+  console.log("Incoming Body:", req.body);
   try {
     const { email, fullName, phoneNumber } = req.body;
 
