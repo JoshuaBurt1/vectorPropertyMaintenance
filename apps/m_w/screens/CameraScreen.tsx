@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { View, TouchableOpacity, Image, Text, StyleSheet, ScrollView, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import * as ImageManipulator from 'expo-image-manipulator'; // Required for resizing
+import * as ImageManipulator from 'expo-image-manipulator';
 import { db } from '../firebaseConfig';
 import { doc, updateDoc } from 'firebase/firestore';
 

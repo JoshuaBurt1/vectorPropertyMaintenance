@@ -314,14 +314,15 @@ app.post("/api/admin/create-worker", async (req: Request, res: Response): Promis
     });
 
     // 3. Initialize the Worker Profile in Firestore
-    await db.collection("workers").doc(userRecord.uid).set({
+    await db.collection("admin_workers").doc(fullName).set({
       uid: userRecord.uid,
       name: fullName,
+      name_lowercase: fullName.toLowerCase(),
       email: email,
+      password: temporaryPassword,
       role: "field_worker",
       status: "active",
       createdAt: new Date().toISOString(),
-      assignedRoutes: []
     });
 
     // 4. Send Invitation Email
@@ -359,6 +360,62 @@ app.post("/api/admin/create-worker", async (req: Request, res: Response): Promis
   } catch (error: any) {
     console.error("❌ Error creating worker account:", error);
     res.status(500).json({ error: error.message || "Failed to create worker account." });
+  }
+});
+
+// Assign work schedule to a worker
+app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { workerName, dateString } = req.body;
+
+    if (!workerName || !dateString) {
+      res.status(400).json({ error: "workerName and dateString are required." });
+      return;
+    }
+
+    // 1. Verify worker exists in admin_workers
+    const workerDoc = await db.collection("admin_workers").doc(workerName).get();
+    if (!workerDoc.exists) {
+      res.status(404).json({ error: "Worker not found in admin_workers." });
+      return;
+    }
+
+    // 2. Combine routes from Morning, Afternoon, and Evening
+    const periods = ["Morning", "Afternoon", "Evening"];
+    let assignedRoute: any[] = [];
+
+    for (const period of periods) {
+      const docId = `${dateString}_${period}`;
+      const slotDoc = await db.collection("schedule").doc(docId).get();
+
+      if (slotDoc.exists) {
+        const data = slotDoc.data();
+        const bookings = data?.bookings || [];
+        assignedRoute.push(...bookings);
+      }
+    }
+
+    // 3. Update admin_workersSchedule with the combined route
+    const scheduleRef = db.collection("admin_workersSchedule").doc(dateString);
+    
+    await scheduleRef.set({
+      worker: workerName,
+      date: dateString,
+      assignedRoute: assignedRoute,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+
+    console.log(`[SCHEDULE] Assigned ${assignedRoute.length} jobs to ${workerName} for ${dateString}`);
+    
+    res.status(200).json({ 
+      success: true, 
+      message: `Schedule assigned to ${workerName}`,
+      jobCount: assignedRoute.length 
+    });
+
+  } catch (error: any) {
+    console.error("❌ Error assigning schedule:", error);
+    res.status(500).json({ error: "Internal server error assigning schedule." });
   }
 });
 

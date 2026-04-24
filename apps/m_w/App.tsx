@@ -1,9 +1,11 @@
 //m_w/App.tsx
-import React, { useState, useEffect, useCallback } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import { db } from './firebaseConfig';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { auth, db } from './firebaseConfig';
+import { doc, onSnapshot, getDoc } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 import { format } from 'date-fns';
 
 // Screens
@@ -16,41 +18,70 @@ const Stack = createStackNavigator();
 export default function App() {
   const [worker, setWorker] = useState<any>(null);
   const [routeData, setRouteData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true);
 
-  const fetchData = useCallback(async (workerName: string) => {
-    const dateStr = format(new Date(), 'yyyy-MM-dd');
-    
-    // 1. Check Schedule Assignment
-    const scheduleRef = doc(db, 'admin_workersSchedule', dateStr);
-    const scheduleSnap = await getDoc(scheduleRef);
-    
-    if (scheduleSnap.exists() && scheduleSnap.data().workers.includes(workerName)) {
-      // 2. Fetch Combined Documents
-      const periods = ['Morning', 'Afternoon', 'Evening'];
-      let combinedRoutes: any[] = [];
-      
-      for (const period of periods) {
-        const docRef = doc(db, 'schedule', `${dateStr}_${period}`);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          combinedRoutes.push(...docSnap.data().routes || []);
-        }
-      }
-      setRouteData(combinedRoutes);
-    } else {
-      setRouteData([]);
-    }
-  }, []);
-
-  // 15-minute polling
+  // 1. Handle Auth Persistence (Session Management)
   useEffect(() => {
-    if (!worker) return;
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          const workerDoc = await getDoc(doc(db, 'workers', user.uid));
+          if (workerDoc.exists()) {
+            setWorker(workerDoc.data());
+          }
+        } catch (error) {
+          console.error("Error fetching worker profile:", error);
+        }
+      } else {
+        setWorker(null);
+      }
+      if (initializing) setInitializing(false);
+    });
 
-    fetchData(worker.name);
-    const interval = setInterval(() => fetchData(worker.name), 15 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [worker, fetchData]);
+    return unsubscribe;
+  }, [initializing]);
+
+  // 2. Real-time Route Listening (onSnapshot)
+  useEffect(() => {
+    if (!worker?.name) return;
+
+    const dateStr = format(new Date(), 'yyyy-MM-dd');
+    const periods = ['Morning', 'Afternoon', 'Evening'];
+    
+    // Listen to the daily worker schedule to see if they are assigned
+    const scheduleRef = doc(db, 'admin_workersSchedule', dateStr);
+    
+    const unsubscribeSchedule = onSnapshot(scheduleRef, (scheduleSnap) => {
+      if (scheduleSnap.exists() && scheduleSnap.data().workers?.includes(worker.name)) {
+        
+        // If assigned, setup listeners for each time period's route
+        const unsubscribers = periods.map((period) => {
+          const docRef = doc(db, 'schedule', `${dateStr}_${period}`);
+          
+          return onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+              const newData = docSnap.data().bookings || []; // Assuming your field name is 'bookings'
+              
+              setRouteData((prev) => {
+                // Filter out old data for this specific period and replace with fresh data
+                const otherPeriods = prev.filter(item => item.period !== period);
+                const periodData = newData.map((b: any) => ({ ...b, period }));
+                return [...otherPeriods, ...periodData];
+              });
+            }
+          });
+        });
+
+        return () => unsubscribers.forEach(unsub => unsub());
+      } else {
+        setRouteData([]);
+      }
+    });
+
+    return () => unsubscribeSchedule();
+  }, [worker]);
+
+  if (initializing) return null; // Or a splash screen
 
   return (
     <NavigationContainer>
@@ -67,7 +98,7 @@ export default function App() {
                   {...props} 
                   worker={worker} 
                   routes={routeData} 
-                  onLogout={() => setWorker(null)} 
+                  onLogout={() => auth.signOut()} 
                 />
               )}
             </Stack.Screen>
