@@ -199,6 +199,25 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    const now = new Date();
+    const currentHour = now.getHours();
+    const isToday = new Date(date).toDateString() === now.toDateString();
+
+    if (isToday) {
+      let isExpired = false;
+      // Check if current time has hit the start of the period
+      if (timeSlot.startsWith("Morning") && currentHour >= 8) isExpired = true;
+      if (timeSlot.startsWith("Afternoon") && currentHour >= 12) isExpired = true;
+      if (timeSlot.startsWith("Evening") && currentHour >= 16) isExpired = true;
+
+      if (isExpired) {
+        res.status(400).json({ 
+          error: "This time slot has already started and is no longer available for booking." 
+        });
+        return;
+      }
+    }
+
     const dateObj = new Date(date);
     const dateString = dateObj.toISOString().split('T')[0]; // "YYYY-MM-DD"
     const slotSlug = timeSlot.split(' ')[0]; // extracts "Morning", "Afternoon", or "Evening"

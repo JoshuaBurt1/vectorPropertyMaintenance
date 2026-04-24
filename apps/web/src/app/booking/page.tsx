@@ -384,9 +384,9 @@ export default function BookingPage() {
                   let isPastSlot = false;
                   
                   if (day.toDateString() === today.toDateString()) {
-                    if (time.startsWith("Morning") && currentHour >= 12) isPastSlot = true;
-                    if (time.startsWith("Afternoon") && currentHour >= 16) isPastSlot = true;
-                    if (time.startsWith("Evening") && currentHour >= 20) isPastSlot = true;
+                    if (time.startsWith("Morning") && currentHour >= 8) isPastSlot = true;
+                    if (time.startsWith("Afternoon") && currentHour >= 12) isPastSlot = true;
+                    if (time.startsWith("Evening") && currentHour >= 16) isPastSlot = true;
                   }
 
                   const fullnessCount = getSlotFullness(day, time);
