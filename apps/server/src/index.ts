@@ -107,6 +107,8 @@ testConnection();
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+app.use(express.json());
+
 // MIDDLEWARE
 const allowedOrigins = [
   "http://localhost:3000",
