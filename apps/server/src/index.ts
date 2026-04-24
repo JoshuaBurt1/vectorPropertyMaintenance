@@ -139,8 +139,6 @@ app.use(cors({
   credentials: true,
 }));
 
-app.use(express.json());
-
 // GET SCHEDULES ENDPOINT: reads the database so the frontend knows which slots are taken.
 app.get("/api/schedule", async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
