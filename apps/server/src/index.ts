@@ -107,23 +107,16 @@ testConnection();
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-app.use(express.json());
+// 1. PLACE THIS FIRST - Absolute top of the middleware stack
+app.use(express.json()); 
 
-// MIDDLEWARE
+// 2. PLACE CORS SECOND
 const allowedOrigins = [
   "http://localhost:3000",
   "https://vectorpm-df058.web.app",
   "https://vectorpm-df058.firebaseapp.com",
   "https://vector-property-maintenance.web.app"
 ];
-
-const transporter = nodemailer.createTransport({
-  service: "gmail", 
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -138,6 +131,15 @@ app.use(cors({
   },
   credentials: true,
 }));
+
+const transporter = nodemailer.createTransport({
+  service: "gmail", 
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
 
 // GET SCHEDULES ENDPOINT: reads the database so the frontend knows which slots are taken.
 app.get("/api/schedule", async (req: Request, res: Response) => {
