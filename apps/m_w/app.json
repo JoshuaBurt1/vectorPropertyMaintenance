@@ -7,12 +7,6 @@
     "plugins": [
       "expo-system-ui",
       [
-        "expo-camera",
-        {
-          "cameraPermission": "Allow VectorPM to access your camera to take job site photos."
-        }
-      ],
-      [
         "expo-location",
         {
           "locationAlwaysPermission": "Allow VectorPM to show your location on the route map."
@@ -22,14 +16,15 @@
     "android": {
       "package": "com.jburt4.worker",
       "permissions": [
-        "CAMERA",
         "ACCESS_FINE_LOCATION",
         "RECORD_AUDIO"
-      ],
-      "config": {
-        "googleMaps": {
-          "apiKey": "YOUR_GOOGLE_MAPS_API_KEY_HERE"
-        }
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.jburt4.worker",
+      "infoPlist": {
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow VectorPM to show your location on the route map.",
+        "NSMicrophoneUsageDescription": "Allow VectorPM to access the microphone."
       }
     }
   }

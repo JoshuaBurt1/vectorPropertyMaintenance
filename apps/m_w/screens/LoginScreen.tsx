@@ -11,13 +11,14 @@ import {
   KeyboardAvoidingView, 
   Platform, 
   TouchableWithoutFeedback, 
-  Keyboard 
+  Keyboard,
+  ActivityIndicator
 } from 'react-native';
 import { auth, db } from '../firebaseConfig'; 
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 
-export default function LoginScreen({ navigation, onLogin }: any) {
+export default function LoginScreen({ onLogin }: any) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -40,46 +41,65 @@ export default function LoginScreen({ navigation, onLogin }: any) {
         Alert.alert("Error", "Worker profile not found in database.");
       }
     } catch (error: any) {
-      Alert.alert("Login Failed", error.message);
+      let errorMessage = "An error occurred during login.";
+      if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found') {
+        errorMessage = "Invalid email or password.";
+      }
+      Alert.alert("Login Failed", errorMessage);
     } finally {
       setLoading(false);
     }
   };
   
   return (
-    // KeyboardAvoidingView ensures the UI shifts up when the keyboard appears
     <KeyboardAvoidingView 
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      {/* TouchableWithoutFeedback allows tapping away to dismiss the keyboard */}
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <View style={styles.inner}>
           <Text style={styles.title}>Worker Login</Text>
           
+          <Text style={styles.label}>Email Address</Text>
           <TextInput 
             style={styles.input} 
-            placeholder="Email" 
+            placeholder="example@vpm.com" 
             value={email} 
             onChangeText={setEmail}
             autoCapitalize="none"
             keyboardType="email-address"
+            autoCorrect={false}
+            spellCheck={false}
+            /* AUTOFILL CONFIGURATION */
+            textContentType="username"        // iOS Intent
+            autoComplete="email"              // Android Intent
+            importantForAutofill="yes"        // Android Force
+            enablesReturnKeyAutomatically={true}
           />
           
+          <Text style={styles.label}>Password</Text>
           <TextInput 
             style={styles.input} 
-            placeholder="Password" 
+            placeholder="••••••••" 
             value={password} 
             onChangeText={setPassword} 
             secureTextEntry 
+            /* AUTOFILL CONFIGURATION */
+            textContentType="password"        // iOS Intent
+            autoComplete="password"           // Android Intent
+            importantForAutofill="yes"        // Android Force
           />
           
           <TouchableOpacity 
-            style={[styles.button, { opacity: loading ? 0.7 : 1 }]} 
+            style={[styles.button, { opacity: loading ? 0.8 : 1 }]} 
             onPress={handleLogin}
             disabled={loading}
           >
-            <Text style={styles.buttonText}>{loading ? "Logging in..." : "Login"}</Text>
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.buttonText}>Login</Text>
+            )}
           </TouchableOpacity>
         </View>
       </TouchableWithoutFeedback>
@@ -88,43 +108,31 @@ export default function LoginScreen({ navigation, onLogin }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: '#fff' 
-  },
-  inner: {
-    flex: 1,
-    padding: 20,
-    // Changed from 'center' to 'flex-start' to move elements up
-    justifyContent: 'flex-start', 
-    // Added paddingTop to position the title comfortably at the top
-    paddingTop: 100, 
-  },
-  title: { 
-    fontSize: 28, 
-    fontWeight: 'bold', 
-    marginBottom: 40, 
-    textAlign: 'center',
-    color: '#2c3e50'
-  },
+  container: { flex: 1, backgroundColor: '#fff' },
+  inner: { flex: 1, padding: 30, justifyContent: 'flex-start', paddingTop: 120 },
+  title: { fontSize: 32, fontWeight: 'bold', marginBottom: 40, color: '#2c3e50' },
+  label: { fontSize: 14, fontWeight: '600', color: '#7f8c8d', marginBottom: 8, marginLeft: 4 },
   input: { 
-    borderWidth: 1, 
-    borderColor: '#ddd', 
-    padding: 15, 
-    borderRadius: 10, 
-    marginBottom: 15,
-    backgroundColor: '#f9f9f9'
+    borderWidth: 1.5, 
+    borderColor: '#edf2f7', 
+    padding: 18, 
+    borderRadius: 12, 
+    marginBottom: 20,
+    backgroundColor: '#f8fafc',
+    fontSize: 16,
+    color: '#2d3748'
   },
   button: { 
     backgroundColor: '#3498db', 
-    padding: 15, 
-    borderRadius: 10, 
+    padding: 18, 
+    borderRadius: 12, 
     alignItems: 'center',
-    marginTop: 10
+    marginTop: 20,
+    elevation: 4,
+    shadowColor: '#3498db',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
   },
-  buttonText: { 
-    color: '#fff', 
-    fontWeight: 'bold', 
-    fontSize: 16 
-  }
+  buttonText: { color: '#fff', fontWeight: '700', fontSize: 18 }
 });

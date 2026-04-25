@@ -4,6 +4,7 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
+    "build:release": "expo run:android --variant release",
     "android": "expo run:android",
     "ios": "expo run:ios"
   },
@@ -13,7 +14,6 @@
     "@react-navigation/stack": "^7.8.10",
     "date-fns": "^4.1.0",
     "expo": "~54.0.33",
-    "expo-camera": "~17.0.10",
     "expo-image-manipulator": "^14.0.8",
     "expo-image-picker": "~17.0.10",
     "expo-location": "~19.0.8",
@@ -24,7 +24,8 @@
     "react-native": "0.81.5",
     "react-native-maps": "1.20.1",
     "react-native-safe-area-context": "5.6.2",
-    "react-native-screens": "~4.16.0"
+    "react-native-screens": "~4.16.0",
+    "react-native-webview": "13.15.0"
   },
   "devDependencies": {
     "@firebase/auth-types": "^0.13.0",

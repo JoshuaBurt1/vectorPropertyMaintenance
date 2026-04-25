@@ -4,13 +4,11 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { auth, db } from './firebaseConfig';
 import { doc, onSnapshot, collection, query, where, getDocs } from 'firebase/firestore';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { format } from 'date-fns';
 
-// Screens
 import LoginScreen from './screens/LoginScreen';
 import DashboardScreen from './screens/DashboardScreen';
-import CameraScreen from './screens/CameraScreen';
 
 const Stack = createStackNavigator();
 
@@ -19,84 +17,91 @@ export default function App() {
   const [routeData, setRouteData] = useState<any[]>([]);
   const [initializing, setInitializing] = useState(true);
 
-  // 1. Handle Auth Persistence (Session Management)
+  // 1. Session Management
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       if (user) {
         try {
           const q = query(collection(db, 'admin_workers'), where('uid', '==', user.uid));
           const querySnapshot = await getDocs(q);
           
           if (!querySnapshot.empty) {
-            setWorker(querySnapshot.docs[0].data());
-          } else {
-             setWorker(null);
+            const workerDoc = querySnapshot.docs[0].data();
+            setWorker(workerDoc);
           }
         } catch (error) {
           console.error("Error fetching worker profile:", error);
         }
       } else {
         setWorker(null);
+        setRouteData([]);
       }
       if (initializing) setInitializing(false);
     });
 
-    return unsubscribe;
-  }, [initializing]);
+    return () => unsubscribeAuth();
+  }, []);
 
-  // 2. Real-time Route Listening (onSnapshot)
+  // 2. Real-time Route Listening
   useEffect(() => {
-    // We need the worker's email to filter their specific routes
-    if (!worker?.email) return;
+    // Ensure both email and name are available before listening
+    if (!worker?.email || !worker?.name) return;
 
     const dateStr = format(new Date(), 'yyyy-MM-dd');
-    
-    // Listen directly to today's document in admin_workersSchedule
     const scheduleRef = doc(db, 'admin_workersSchedule', dateStr);
     
     const unsubscribeSchedule = onSnapshot(scheduleRef, (scheduleSnap) => {
       if (scheduleSnap.exists()) {
         const data = scheduleSnap.data();
-        const allAssignedRoutes = data.assignedRoute || [];
         
-        // Filter the array to only include jobs assigned to the logged-in worker's email
-        const workerSpecificRoutes = allAssignedRoutes.filter(
-          (job: any) => job.email === worker.email
-        );
-        
-        setRouteData(workerSpecificRoutes);
+        if (data.worker === worker.name) {
+          const allAssignedRoutes = data.assignedRoute || [];
+          setRouteData(allAssignedRoutes);
+        } else {
+          setRouteData([]);
+        }
       } else {
-        // If there is no document for today, clear the route data
         setRouteData([]);
       }
+    }, (error) => {
+      console.error("Schedule Listener Error:", error);
     });
 
     return () => unsubscribeSchedule();
-  }, [worker]);
+  }, [worker?.email, worker?.name]);
 
-  if (initializing) return null; // Or a splash screen
+  // LOGOUT LOGIC
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setWorker(null);
+      setRouteData([]);
+    } catch (e) {
+      console.error("Logout failed", e);
+    }
+  };
+
+  if (initializing) return null;
 
   return (
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!worker ? (
+          /* When worker is null, this screen mounts fresh */
           <Stack.Screen name="Login">
             {(props) => <LoginScreen {...props} onLogin={setWorker} />}
           </Stack.Screen>
         ) : (
-          <>
-            <Stack.Screen name="Dashboard">
-              {(props) => (
-                <DashboardScreen 
-                  {...props} 
-                  worker={worker} 
-                  routes={routeData} 
-                  onLogout={() => auth.signOut()} 
-                />
-              )}
-            </Stack.Screen>
-            <Stack.Screen name="Camera" component={CameraScreen} />
-          </>
+          <Stack.Screen name="Dashboard">
+            {(props) => (
+              <DashboardScreen 
+                {...props} 
+                worker={worker} 
+                routes={routeData} 
+                onLogout={handleLogout} 
+              />
+            )}
+          </Stack.Screen>
         )}
       </Stack.Navigator>
     </NavigationContainer>
