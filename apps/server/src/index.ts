@@ -8,7 +8,6 @@ import path from "path";
 import nodemailer from "nodemailer";
 
 // ROUTE OPTIMIZATION LOGIC
-
 const HOME_BASE = { lat: 44.3894, lng: -79.6903 };
 
 function getDistance(p1: { lat: number; lng: number }, p2: { lat: number; lng: number }) {
@@ -22,13 +21,50 @@ function getDistance(p1: { lat: number; lng: number }, p2: { lat: number; lng: n
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
+// --- Helper for Road Distance ---
+async function getRoadDistance(p1: { lat: number; lng: number }, p2: { lat: number; lng: number }): Promise<number> {
+  try {
+    // Calculate Haversine (Straight Line) for comparison
+    const straightLineDist = getDistance(p1, p2);
+    
+    const url = `https://router.project-osrm.org/route/v1/driving/${p1.lng},${p1.lat};${p2.lng},${p2.lat}?overview=false`;
+    const res = await fetch(url);
+    const data = await res.json();
+    
+    if (data.routes && data.routes[0]) {
+      const roadDistKm = data.routes[0].distance / 1000;
+      
+      // Calculate the "Curvature Factor" (Road Distance / Straight Distance)
+      const ratio = straightLineDist > 0 ? (roadDistKm / straightLineDist).toFixed(2) : "1.00";
+
+      // COMPARISON LOG
+      console.log(
+        `[Distance Check] \n` +
+        `   Straight Line: ${straightLineDist.toFixed(2)} km \n` +
+        `   OSRM Road:     ${roadDistKm.toFixed(2)} km \n` +
+        `   Increase:      ${((roadDistKm - straightLineDist) / straightLineDist * 100).toFixed(1)}% (Factor: ${ratio}x)`
+      );
+
+      return roadDistKm;
+    }
+    return 0;
+  } catch (error) {
+    console.error("[OSRM Error]:", error);
+    return 0;
+  }
+}
+
+// Route Optimization
 async function optimizeDayRoute(dateString: string) {
+  console.log(`Starting Route Optimization for ${dateString}`);
   const slots = ["Morning", "Afternoon", "Evening"];
   const batch = db.batch();
   
-  // Start the day at the shop
   let currentPos = HOME_BASE;
-  let totalDistance = 0;
+  let totalRoadDist = 0;
+  let totalStraightDist = 0;
+  let jobCount = 0;
+  let fullDailyRoute: any[] = []; // Stores the completely sorted schedule for the day
 
   for (const slot of slots) {
     const docId = `${dateString}_${slot}`;
@@ -40,34 +76,56 @@ async function optimizeDayRoute(dateString: string) {
       const bookings = data?.bookings || [];
 
       if (bookings.length > 0) {
-        // 1. Sort the bookings by distance from the worker's current location
         bookings.sort((a: any, b: any) => {
           const distA = getDistance(currentPos, { lat: a.location[0], lng: a.location[1] });
           const distB = getDistance(currentPos, { lat: b.location[0], lng: b.location[1] });
           return distA - distB;
         });
 
-        // 2. Accumulate distance and update currentPos for each booking
         for (const b of bookings) {
           const bLoc = { lat: b.location[0], lng: b.location[1] };
-          totalDistance += getDistance(currentPos, bLoc);
+          
+          // Track the theoretical straight line
+          totalStraightDist += getDistance(currentPos, bLoc);
+          
+          // Get and track the actual road distance
+          const roadDist = await getRoadDistance(currentPos, bLoc);
+          totalRoadDist += roadDist;
+          
           currentPos = bLoc;
-        }
+          jobCount++;
 
-        // 3. Add the sorted array to our update batch
+          // Push the sorted booking to the day's master route
+          fullDailyRoute.push(b);
+        }
         batch.update(docRef, { bookings });
       }
     }
   }
 
-  // 4. Update the daily log with the total projected distance
+  // Return to base
+  totalStraightDist += getDistance(currentPos, HOME_BASE);
+  const finalReturnRoad = await getRoadDistance(currentPos, HOME_BASE);
+  totalRoadDist += finalReturnRoad;
+
   const logRef = db.collection("daily_log").doc(dateString);
-  //totalDistance += getDistance(currentPos, HOME_BASE); // distance back to HOME_BASE
   batch.set(logRef, { 
-    distance: Number(totalDistance.toFixed(2)) 
+    distance: Number(totalRoadDist.toFixed(2)),
+    straightLineTotal: Number(totalStraightDist.toFixed(2)),
+    unit: "km",
+    route: fullDailyRoute, // Save the complete sorted route to the daily log
+    updatedAt: new Date().toISOString()
   }, { merge: true });
 
   await batch.commit();
+  
+  // FINAL COMPARISON SUMMARY
+  console.log(`--- Optimization Complete ---`);
+  console.log(`Jobs: ${jobCount}`);
+  console.log(`Theoretical (Straight): ${totalStraightDist.toFixed(2)} km`);
+  console.log(`Actual (Road Path):     ${totalRoadDist.toFixed(2)} km`);
+  console.log(`Difference:            ${(totalRoadDist - totalStraightDist).toFixed(2)} km extra due to roads.`);
+  console.log(`------------------------------------------`);
 }
 
 let serviceAccount;
@@ -223,7 +281,6 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
     const slotSlug = timeSlot.split(' ')[0]; // extracts "Morning", "Afternoon", or "Evening"
     const documentId = `${dateString}_${slotSlug}`; // document ID
 
-    // 1. Transaction to ensure we never exceed 2 bookings per slot concurrently
     await db.runTransaction(async (t) => {
       const slotRef = db.collection("schedule").doc(documentId);
       const doc = await t.get(slotRef);
@@ -243,6 +300,7 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
         address,
         location,
         service,
+        period: slotSlug.toLowerCase(),
         originalDate: date,
         transactionId: req.body.transactionId,
         status: "pending",
@@ -400,22 +458,18 @@ app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Prom
       return;
     }
 
-    // 2. Combine routes from Morning, Afternoon, and Evening
-    const periods = ["Morning", "Afternoon", "Evening"];
+    // 2. Fetch the pre-optimized route directly from daily_log
+    const logDoc = await db.collection("daily_log").doc(dateString).get();
     let assignedRoute: any[] = [];
-
-    for (const period of periods) {
-      const docId = `${dateString}_${period}`;
-      const slotDoc = await db.collection("schedule").doc(docId).get();
-
-      if (slotDoc.exists) {
-        const data = slotDoc.data();
-        const bookings = data?.bookings || [];
-        assignedRoute.push(...bookings);
-      }
+    
+    if (logDoc.exists) {
+      const logData = logDoc.data();
+      assignedRoute = logData?.route || [];
+    } else {
+      console.warn(`[SCHEDULE WARNING] No daily_log found for ${dateString}. assignedRoute will be empty.`);
     }
 
-    // 3. Update admin_workersSchedule with the combined route
+    // 3. Update admin_workersSchedule with the fully optimized route
     const scheduleRef = db.collection("admin_workersSchedule").doc(dateString);
     
     await scheduleRef.set({
