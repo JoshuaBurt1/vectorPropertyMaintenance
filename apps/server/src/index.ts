@@ -21,13 +21,14 @@ function getDistance(p1: { lat: number; lng: number }, p2: { lat: number; lng: n
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
-// --- Helper for Road Distance ---
-async function getRoadDistance(p1: { lat: number; lng: number }, p2: { lat: number; lng: number }): Promise<number> {
+// --- Helper for Road Distance & Geometry ---
+async function getRoadData(p1: { lat: number; lng: number }, p2: { lat: number; lng: number }): Promise<{ distance: number, coords: number[][] }> {
   try {
     // Calculate Haversine (Straight Line) for comparison
     const straightLineDist = getDistance(p1, p2);
     
-    const url = `https://router.project-osrm.org/route/v1/driving/${p1.lng},${p1.lat};${p2.lng},${p2.lat}?overview=false`;
+    // overview=full gives the detailed path. geometries=geojson returns [lng, lat] arrays.
+    const url = `https://router.project-osrm.org/route/v1/driving/${p1.lng},${p1.lat};${p2.lng},${p2.lat}?overview=full&geometries=geojson`;
     const res = await fetch(url);
     const data = await res.json();
     
@@ -45,12 +46,15 @@ async function getRoadDistance(p1: { lat: number; lng: number }, p2: { lat: numb
         `   Increase:      ${((roadDistKm - straightLineDist) / straightLineDist * 100).toFixed(1)}% (Factor: ${ratio}x)`
       );
 
-      return roadDistKm;
+      return {
+        distance: roadDistKm,
+        coords: data.routes[0].geometry.coordinates // Array of [lng, lat]
+      };
     }
-    return 0;
+    return { distance: 0, coords: [] };
   } catch (error) {
     console.error("[OSRM Error]:", error);
-    return 0;
+    return { distance: 0, coords: [] };
   }
 }
 
@@ -65,6 +69,7 @@ async function optimizeDayRoute(dateString: string) {
   let totalStraightDist = 0;
   let jobCount = 0;
   let fullDailyRoute: any[] = []; // Stores the completely sorted schedule for the day
+  let coordinate_route: number[][] = []; // Stores the full path for the map
 
   for (const slot of slots) {
     const docId = `${dateString}_${slot}`;
@@ -88,9 +93,10 @@ async function optimizeDayRoute(dateString: string) {
           // Track the theoretical straight line
           totalStraightDist += getDistance(currentPos, bLoc);
           
-          // Get and track the actual road distance
-          const roadDist = await getRoadDistance(currentPos, bLoc);
-          totalRoadDist += roadDist;
+          // Get distance AND coordinates
+          const roadData = await getRoadData(currentPos, bLoc);
+          totalRoadDist += roadData.distance;
+          coordinate_route.push(...roadData.coords); 
           
           currentPos = bLoc;
           jobCount++;
@@ -105,8 +111,9 @@ async function optimizeDayRoute(dateString: string) {
 
   // Return to base
   totalStraightDist += getDistance(currentPos, HOME_BASE);
-  const finalReturnRoad = await getRoadDistance(currentPos, HOME_BASE);
-  totalRoadDist += finalReturnRoad;
+  const finalReturnRoad = await getRoadData(currentPos, HOME_BASE);
+  totalRoadDist += finalReturnRoad.distance;
+  coordinate_route.push(...finalReturnRoad.coords);
 
   const logRef = db.collection("daily_log").doc(dateString);
   batch.set(logRef, { 
@@ -114,6 +121,7 @@ async function optimizeDayRoute(dateString: string) {
     straightLineTotal: Number(totalStraightDist.toFixed(2)),
     unit: "km",
     route: fullDailyRoute, // Save the complete sorted route to the daily log
+    coordinate_route: coordinate_route, // Stored for frontend mapping
     updatedAt: new Date().toISOString()
   }, { merge: true });
 
@@ -461,10 +469,12 @@ app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Prom
     // 2. Fetch the pre-optimized route directly from daily_log
     const logDoc = await db.collection("daily_log").doc(dateString).get();
     let assignedRoute: any[] = [];
+    let coordinate_route: number[][] = [];
     
     if (logDoc.exists) {
       const logData = logDoc.data();
       assignedRoute = logData?.route || [];
+      coordinate_route = logData?.coordinate_route || []; // Fetch the polyline data
     } else {
       console.warn(`[SCHEDULE WARNING] No daily_log found for ${dateString}. assignedRoute will be empty.`);
     }
@@ -476,6 +486,7 @@ app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Prom
       worker: workerName,
       date: dateString,
       assignedRoute: assignedRoute,
+      coordinate_route: coordinate_route, // Copy to worker's schedule
       updatedAt: new Date().toISOString()
     }, { merge: true });
 
