@@ -256,10 +256,15 @@ const broadcastUpdate = (data: any) => {
 
 app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, email, address, location, service, date, timeSlot } = req.body;
+    const { name, email, address, phone, location, service, date, timeSlot } = req.body;
 
-    if (!name || !email || !address || !location || !service || !date || !timeSlot) {
+    if (!name || !email || !address || !phone || !location || !service || !date || !timeSlot) {
       res.status(400).json({ error: "Missing required booking fields." });
+      return;
+    }
+
+    if (!/\d/.test(address)) {
+      res.status(400).json({ error: "Address must include a property number." });
       return;
     }
 
@@ -302,6 +307,7 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
         name,
         name_lowercase: name.toLowerCase(),
         email,
+        phone,
         address,
         location,
         service,

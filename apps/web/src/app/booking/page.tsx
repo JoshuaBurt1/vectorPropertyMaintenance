@@ -1,7 +1,7 @@
 // web/src/app/booking/page.tsx
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { PayPalScriptProvider, PayPalButtons } from "@paypal/react-paypal-js";
 import dynamic from 'next/dynamic';
@@ -56,11 +56,6 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * c; 
 }
 
-// Dynamic import for Leaflet to prevent Next.js SSR "window is not defined" errors
-const MapContainer = dynamic(() => import('react-leaflet').then(mod => mod.MapContainer), { ssr: false });
-const TileLayer = dynamic(() => import('react-leaflet').then(mod => mod.TileLayer), { ssr: false });
-const Marker = dynamic(() => import('react-leaflet').then(mod => mod.Marker), { ssr: false });
-const Circle = dynamic(() => import('react-leaflet').then(mod => mod.Circle), { ssr: false });
 import { useMap, useMapEvents } from "react-leaflet";
 
 export default function BookingPage() {
@@ -73,6 +68,7 @@ export default function BookingPage() {
     name: "",
     address: "",
     email: "", 
+    phone: "",
     service: "Grass Cutting",
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -91,8 +87,9 @@ export default function BookingPage() {
     "Afternoon (12PM - 4PM)",
     "Evening (4PM - 8PM)",
   ];
+  const hasPropertyNumber = /^\d+/.test(formData.address.trim());
 
-  const services = ["Grass Cutting", "Leaf & Wood Removal", "Pool Cleaning", "Snow Shovelling", "Residential Cleaning", "Warehouse Cleaning"];
+  const services = ["Grass Cutting", "Leaf & Wood Removal", "Pool Cleaning", "Snow Shovelling", "Residential Cleaning", "Warehouse Cleaning"];  
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -119,7 +116,7 @@ export default function BookingPage() {
   useEffect(() => {
     setMounted(true);
     
-    // Fix Leaflet icons
+    // Leaflet icons
     if (typeof window !== 'undefined') {
       import('leaflet').then((L) => {
         delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -184,7 +181,7 @@ export default function BookingPage() {
     setIsMapVisible(false);
     setUserLocation(null);
     setIsAddressValid(false);
-    setFormData({ name: "", address: "", email: "", service: "Grass Cutting" });
+    setFormData({ name: "", address: "", email: "", phone: "", service: "Grass Cutting" }); // Reset phone
   };
 
   const handleBookingSubmission = async (transactionId: string) => {
@@ -207,7 +204,6 @@ export default function BookingPage() {
       const result = await response.json();
 
       if (!response.ok) {
-        // This is what happened in your screenshot
         if (response.status === 409) {
             alert("CRITICAL: Payment went through but the slot was taken. Please contact us immediately for a refund or manual booking.");
             return;
@@ -217,7 +213,7 @@ export default function BookingPage() {
 
       alert("Booking confirmed!");
       closeModal();
-      fetchBookings(); // Force refresh immediately after booking
+      fetchBookings();
     } catch (error: any) {
       console.error(error);
       alert(error.message);
@@ -226,9 +222,7 @@ export default function BookingPage() {
     }
   };
 
-  // --- Geocoding Logic ---
-  
-  // Universal function for both forward and reverse geocoding
+  // Geocoding Logic: Universal function for both forward and reverse geocoding
   const handleGeocode = async (query: string, isReverse = false) => {
     setIsGeocoding(true);
     const url = `https://api.opencagedata.com/geocode/v1/json?q=${encodeURIComponent(query)}&key=${OPENCAGE_API_KEY}`;
@@ -313,7 +307,12 @@ export default function BookingPage() {
     return null;
   };
 
-  const isFormValid = formData.name.trim() !== "" && isAddressValid && formData.email.includes("@");
+  const isFormValid = 
+    formData.name.trim() !== "" && 
+    isAddressValid && 
+    hasPropertyNumber &&
+    formData.phone.trim().length >= 10 &&
+    formData.email.includes("@");
 
   const getSlotFullness = (day: Date, time: string) => {
     const dayString = day.toISOString().split('T')[0];
@@ -541,7 +540,12 @@ export default function BookingPage() {
                     {/* Address Validation Feedback */}
                     {isMapVisible && formData.address && !isAddressValid && !isGeocoding && (
                       <p className="text-xs text-red-500 mt-1.5 font-medium">
-                        Must verify an address within our 100km radius. Try searching or clicking the map.
+                        Must verify an address within our 100km radius.
+                      </p>
+                    )}
+                    {isAddressValid && !hasPropertyNumber && (
+                      <p className="text-xs text-orange-600 mt-1.5 font-medium">
+                        ⚠️ Please include your house/property number at the start of the address.
                       </p>
                     )}
                     {isAddressValid && !isGeocoding && (
@@ -560,6 +564,18 @@ export default function BookingPage() {
                       className="w-full border border-zinc-300 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-black"
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Phone Number</label>
+                    <input
+                      required
+                      type="tel"
+                      placeholder="(555) 555-5555"
+                      className="w-full border border-zinc-300 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-black"
+                      value={formData.phone}
+                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                     />
                   </div>
 
