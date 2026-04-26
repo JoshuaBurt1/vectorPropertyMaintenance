@@ -462,7 +462,7 @@ app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Prom
 });
 
 // COMBINED END-OF-DAY MAINTENANCE
-cron.schedule("29 23 * * *", async () => {
+cron.schedule("38 23 * * *", async () => {
   console.log("🚀 [EOD-MAINTENANCE] Starting tasks...");
   
   // 1. Get Today and Tomorrow in YYYY-MM-DD
@@ -478,12 +478,11 @@ cron.schedule("29 23 * * *", async () => {
     const batch = db.batch();
     let writeCount = 0;
 
-    // === PART 1: DELETE PAST RAW BOOKINGS (schedule collection) ===
+    // PART 1: DELETE PAST RAW BOOKINGS (schedule collection)
     console.log("[CLEANUP] Checking 'schedule' for past documents...");
     const scheduleSnapshot = await db.collection("schedule").get();
 
     scheduleSnapshot.docs.forEach((doc) => {
-      // Split "2026-04-25_Afternoon" to get just the date part
       const docDate = doc.id.split('_')[0]; 
       
       if (docDate < todayStr) {
@@ -518,40 +517,49 @@ cron.schedule("29 23 * * *", async () => {
       console.log(`[MAINTENANCE] Cleaned/Archived ${writeCount} total documents.`);
     }
 
-    // === PART 3: FAIL-SAFE TOMORROW ASSIGNMENT ===
-    console.log(`[FAIL-SAFE] Checking assignment for: ${tomorrowStr}`);
+    // === PART 3: FAIL-SAFE & UPDATE TOMORROW ASSIGNMENT ===
+    console.log(`[MAINTENANCE] Updating/Assigning schedule for: ${tomorrowStr}`);
     const tomorrowRef = db.collection("admin_workersSchedule").doc(tomorrowStr);
     const tomorrowDoc = await tomorrowRef.get();
-    
+
+    let workerToAssign: string | null = null;
+
     if (tomorrowDoc.exists) {
-      console.log(`[FAIL-SAFE] ${tomorrowStr} is already assigned to ${tomorrowDoc.data()?.worker}.`);
+      // If already assigned, keep the same worker but update their route
+      workerToAssign = tomorrowDoc.data()?.worker;
+      console.log(`[UPDATE] Refreshing route for existing worker: ${workerToAssign}`);
     } else {
+      // If not assigned, pick a random active worker
       const workersSnapshot = await db.collection("admin_workers")
         .where("status", "==", "active") 
         .get();
       
       if (!workersSnapshot.empty) {
         const activeWorkers = workersSnapshot.docs.map(doc => doc.id);
-        const randomWorker = activeWorkers[Math.floor(Math.random() * activeWorkers.length)];
-
-        console.log(`[FAIL-SAFE] Generating route for ${randomWorker}...`);
-        const routeData = await generateDailyRoute(tomorrowStr);
-
-        await tomorrowRef.set({
-          worker: randomWorker,
-          date: tomorrowStr,
-          assignedRoute: routeData.route,
-          coordinate_route: routeData.coordinate_route,
-          distance: routeData.distance,
-          straightLineTotal: routeData.straightLineTotal,
-          updatedAt: new Date().toISOString(),
-          autoAssigned: true 
-        }, { merge: true });
-
-        console.log(`[FAIL-SAFE] Auto-assigned ${tomorrowStr} to ${randomWorker}.`);
-      } else {
-        console.error("[FAIL-SAFE] No active workers found to assign!");
+        workerToAssign = activeWorkers[Math.floor(Math.random() * activeWorkers.length)];
+        console.log(`[FAIL-SAFE] No assignment found. Picking random worker: ${workerToAssign}`);
       }
+    }
+
+    if (workerToAssign) {
+      // Generate the fresh route data (this captures any bookings made after the last assignment)
+      const routeData = await generateDailyRoute(tomorrowStr);
+
+      await tomorrowRef.set({
+        worker: workerToAssign,
+        date: tomorrowStr,
+        assignedRoute: routeData.route,
+        coordinate_route: routeData.coordinate_route,
+        distance: routeData.distance,
+        straightLineTotal: routeData.straightLineTotal,
+        updatedAt: new Date().toISOString(),
+        // Mark as auto-assigned only if it didn't exist before
+        autoAssigned: tomorrowDoc.exists ? (tomorrowDoc.data()?.autoAssigned || false) : true 
+      }, { merge: true });
+
+      console.log(`[SUCCESS] Schedule for ${tomorrowStr} is up-to-date for ${workerToAssign}.`);
+    } else {
+      console.error("[ERROR] Could not find a worker to assign for tomorrow.");
     }
 
     console.log("✅ [EOD-MAINTENANCE] All tasks finished.");
