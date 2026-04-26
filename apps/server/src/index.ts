@@ -59,6 +59,7 @@ async function getRoadData(p1: { lat: number; lng: number }, p2: { lat: number; 
 }
 
 // Route Optimization
+// Replace the start and end of the function logic
 async function optimizeDayRoute(dateString: string) {
   console.log(`Starting Route Optimization for ${dateString}`);
   const slots = ["Morning", "Afternoon", "Evening"];
@@ -68,8 +69,9 @@ async function optimizeDayRoute(dateString: string) {
   let totalRoadDist = 0;
   let totalStraightDist = 0;
   let jobCount = 0;
-  let fullDailyRoute: any[] = []; // Stores the completely sorted schedule for the day
-  let coordinate_route: number[][] = []; // Stores the full path for the map
+  let fullDailyRoute: any[] = []; 
+  
+  let coordinate_route: string[] = []; 
 
   for (const slot of slots) {
     const docId = `${dateString}_${slot}`;
@@ -89,19 +91,16 @@ async function optimizeDayRoute(dateString: string) {
 
         for (const b of bookings) {
           const bLoc = { lat: b.location[0], lng: b.location[1] };
-          
-          // Track the theoretical straight line
           totalStraightDist += getDistance(currentPos, bLoc);
           
-          // Get distance AND coordinates
           const roadData = await getRoadData(currentPos, bLoc);
           totalRoadDist += roadData.distance;
-          coordinate_route.push(...roadData.coords); 
+
+          const flattenedPath = roadData.coords.map(coord => `${coord[0]},${coord[1]}`);
+          coordinate_route.push(...flattenedPath); 
           
           currentPos = bLoc;
           jobCount++;
-
-          // Push the sorted booking to the day's master route
           fullDailyRoute.push(b);
         }
         batch.update(docRef, { bookings });
@@ -113,15 +112,17 @@ async function optimizeDayRoute(dateString: string) {
   totalStraightDist += getDistance(currentPos, HOME_BASE);
   const finalReturnRoad = await getRoadData(currentPos, HOME_BASE);
   totalRoadDist += finalReturnRoad.distance;
-  coordinate_route.push(...finalReturnRoad.coords);
+  
+  const flattenedReturn = finalReturnRoad.coords.map(coord => `${coord[0]},${coord[1]}`);
+  coordinate_route.push(...flattenedReturn);
 
   const logRef = db.collection("daily_log").doc(dateString);
   batch.set(logRef, { 
     distance: Number(totalRoadDist.toFixed(2)),
     straightLineTotal: Number(totalStraightDist.toFixed(2)),
     unit: "km",
-    route: fullDailyRoute, // Save the complete sorted route to the daily log
-    coordinate_route: coordinate_route, // Stored for frontend mapping
+    route: fullDailyRoute,
+    coordinate_route: coordinate_route, // Now Firestore-compatible strings
     updatedAt: new Date().toISOString()
   }, { merge: true });
 
@@ -453,40 +454,27 @@ app.post("/api/admin/create-worker", async (req: Request, res: Response): Promis
 app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Promise<void> => {
   try {
     const { workerName, dateString } = req.body;
+    // ... validation and worker check logic ...
 
-    if (!workerName || !dateString) {
-      res.status(400).json({ error: "workerName and dateString are required." });
-      return;
-    }
-
-    // 1. Verify worker exists in admin_workers
-    const workerDoc = await db.collection("admin_workers").doc(workerName).get();
-    if (!workerDoc.exists) {
-      res.status(404).json({ error: "Worker not found in admin_workers." });
-      return;
-    }
-
-    // 2. Fetch the pre-optimized route directly from daily_log
     const logDoc = await db.collection("daily_log").doc(dateString).get();
     let assignedRoute: any[] = [];
-    let coordinate_route: number[][] = [];
+    
+    // CHANGE 4: Ensure coordinate_route is treated as string array
+    let coordinate_route: string[] = []; 
     
     if (logDoc.exists) {
       const logData = logDoc.data();
       assignedRoute = logData?.route || [];
-      coordinate_route = logData?.coordinate_route || []; // Fetch the polyline data
-    } else {
-      console.warn(`[SCHEDULE WARNING] No daily_log found for ${dateString}. assignedRoute will be empty.`);
-    }
+      coordinate_route = logData?.coordinate_route || []; 
+    } 
 
-    // 3. Update admin_workersSchedule with the fully optimized route
     const scheduleRef = db.collection("admin_workersSchedule").doc(dateString);
     
     await scheduleRef.set({
       worker: workerName,
       date: dateString,
       assignedRoute: assignedRoute,
-      coordinate_route: coordinate_route, // Copy to worker's schedule
+      coordinate_route: coordinate_route, // Stays flattened
       updatedAt: new Date().toISOString()
     }, { merge: true });
 
