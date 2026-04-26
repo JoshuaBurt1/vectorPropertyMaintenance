@@ -59,9 +59,8 @@ async function getRoadData(p1: { lat: number; lng: number }, p2: { lat: number; 
 }
 
 // Route Optimization
-// Replace the start and end of the function logic
-async function optimizeDayRoute(dateString: string) {
-  console.log(`Starting Route Optimization for ${dateString}`);
+async function generateDailyRoute(dateString: string) {
+  console.log(`Generating & Optimizing Route Data for ${dateString}`);
   const slots = ["Morning", "Afternoon", "Evening"];
   const batch = db.batch();
   
@@ -70,7 +69,6 @@ async function optimizeDayRoute(dateString: string) {
   let totalStraightDist = 0;
   let jobCount = 0;
   let fullDailyRoute: any[] = []; 
-  
   let coordinate_route: string[] = []; 
 
   for (const slot of slots) {
@@ -83,6 +81,7 @@ async function optimizeDayRoute(dateString: string) {
       const bookings = data?.bookings || [];
 
       if (bookings.length > 0) {
+        // Sort bookings by proximity to the last location
         bookings.sort((a: any, b: any) => {
           const distA = getDistance(currentPos, { lat: a.location[0], lng: a.location[1] });
           const distB = getDistance(currentPos, { lat: b.location[0], lng: b.location[1] });
@@ -103,6 +102,7 @@ async function optimizeDayRoute(dateString: string) {
           jobCount++;
           fullDailyRoute.push(b);
         }
+        // Save the sorted order back to the slot document
         batch.update(docRef, { bookings });
       }
     }
@@ -112,29 +112,21 @@ async function optimizeDayRoute(dateString: string) {
   totalStraightDist += getDistance(currentPos, HOME_BASE);
   const finalReturnRoad = await getRoadData(currentPos, HOME_BASE);
   totalRoadDist += finalReturnRoad.distance;
-  
   const flattenedReturn = finalReturnRoad.coords.map(coord => `${coord[0]},${coord[1]}`);
   coordinate_route.push(...flattenedReturn);
 
-  const logRef = db.collection("daily_log").doc(dateString);
-  batch.set(logRef, { 
-    distance: Number(totalRoadDist.toFixed(2)),
-    straightLineTotal: Number(totalStraightDist.toFixed(2)),
-    unit: "km",
-    route: fullDailyRoute,
-    coordinate_route: coordinate_route, // Now Firestore-compatible strings
-    updatedAt: new Date().toISOString()
-  }, { merge: true });
-
+  // Commit the sorted bookings to the schedule slots
   await batch.commit();
   
-  // FINAL COMPARISON SUMMARY
-  console.log(`--- Optimization Complete ---`);
-  console.log(`Jobs: ${jobCount}`);
-  console.log(`Theoretical (Straight): ${totalStraightDist.toFixed(2)} km`);
-  console.log(`Actual (Road Path):     ${totalRoadDist.toFixed(2)} km`);
-  console.log(`Difference:            ${(totalRoadDist - totalStraightDist).toFixed(2)} km extra due to roads.`);
-  console.log(`------------------------------------------`);
+  console.log(`--- Route Generation Complete ---`);
+  console.log(`Jobs: ${jobCount} | Road Path: ${totalRoadDist.toFixed(2)} km`);
+
+  return {
+    route: fullDailyRoute,
+    coordinate_route: coordinate_route,
+    distance: Number(totalRoadDist.toFixed(2)),
+    straightLineTotal: Number(totalStraightDist.toFixed(2))
+  };
 }
 
 let serviceAccount;
@@ -156,28 +148,11 @@ admin.initializeApp({
 const db = admin.firestore();
 console.log("✅ VectorPM Firebase Admin connected");
 
-// Test writing a piece of data to DB
-const testConnection = async () => {
-  try {
-    await db.collection('system_checks').add({
-      status: 'online',
-      timestamp: new Date().toISOString()
-    });
-    console.log("🚀 Firestore connection verified! Test document written.");
-  } catch (e) {
-    console.error("❌ Firestore connection failed:", e);
-  }
-};
-
-testConnection();
-
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// 1. PLACE THIS FIRST - Absolute top of the middleware stack
 app.use(express.json()); 
 
-// 2. PLACE CORS SECOND
 const allowedOrigins = [
   "http://localhost:3000",
   "https://vectorpm-df058.web.app",
@@ -323,8 +298,6 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
       }, { merge: true });
     });
 
-    await optimizeDayRoute(dateString);
-
     console.log(`[BOOKING] Slot updated & Route Optimized: ${documentId}`);
     broadcastUpdate({ type: "REFRESH_SCHEDULE", documentId });
 
@@ -454,8 +427,13 @@ app.post("/api/admin/create-worker", async (req: Request, res: Response): Promis
 app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Promise<void> => {
   try {
     const { workerName, dateString } = req.body;
-    // ... validation and worker check logic ...
 
+    if(!workerName || !dateString) {
+      res.status(400).json({ error: "workerName and dateString are required." });
+      return;
+    }
+
+    /*
     const logDoc = await db.collection("daily_log").doc(dateString).get();
     let assignedRoute: any[] = [];
     
@@ -466,24 +444,28 @@ app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Prom
       const logData = logDoc.data();
       assignedRoute = logData?.route || [];
       coordinate_route = logData?.coordinate_route || []; 
-    } 
+    } */
+
+    const routeData = await generateDailyRoute(dateString);
 
     const scheduleRef = db.collection("admin_workersSchedule").doc(dateString);
     
-    await scheduleRef.set({
+   await scheduleRef.set({
       worker: workerName,
       date: dateString,
-      assignedRoute: assignedRoute,
-      coordinate_route: coordinate_route, // Stays flattened
+      assignedRoute: routeData.route,
+      coordinate_route: routeData.coordinate_route, 
+      distance: routeData.distance,
+      straightLineTotal: routeData.straightLineTotal,
       updatedAt: new Date().toISOString()
     }, { merge: true });
 
-    console.log(`[SCHEDULE] Assigned ${assignedRoute.length} jobs to ${workerName} for ${dateString}`);
+    console.log(`[SCHEDULE] Assigned ${routeData.route.length} jobs to ${workerName} for ${dateString}`);
     
     res.status(200).json({ 
       success: true, 
       message: `Schedule assigned to ${workerName}`,
-      jobCount: assignedRoute.length 
+      jobCount: routeData.route.length 
     });
 
   } catch (error: any) {
@@ -511,9 +493,9 @@ cron.schedule("*/15 * * * *", async () => {
 
     snapshot.docs.forEach((doc) => {
       const data = doc.data();
-      const completedRef = db.collection("completedWorkOrders").doc(doc.id);
+      const completedRef = db.collection("admin_complete").doc(doc.id);
       
-      // Copy to completedWorkOrders
+      // Copy to admin_complete
       batch.set(completedRef, data);
       
       // Delete from schedule
