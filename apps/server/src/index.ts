@@ -7,6 +7,23 @@ import * as admin from "firebase-admin";
 import path from "path";
 import nodemailer from "nodemailer";
 
+// SECURE PAYPAL INTEGRATION
+const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID;
+const PAYPAL_APP_SECRET = process.env.PAYPAL_APP_SECRET;
+const PAYPAL_API_BASE = process.env.PAYPAL_API_BASE || "https://api-m.sandbox.paypal.com";
+
+// Helper: Generate PayPal Access Token
+async function generatePayPalAccessToken() {
+  const auth = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_APP_SECRET}`).toString("base64");
+  const response = await fetch(`${PAYPAL_API_BASE}/v1/oauth2/token`, {
+    method: "POST",
+    body: "grant_type=client_credentials",
+    headers: { Authorization: `Basic ${auth}` },
+  });
+  const data = await response.json();
+  return data.access_token;
+}
+
 // ROUTE OPTIMIZATION LOGIC
 const HOME_BASE = { lat: 44.3894, lng: -79.6903 };
 
@@ -81,26 +98,27 @@ async function generateDailyRoute(dateString: string) {
 
         while (unvisited.length > 0) {
           let bestIdx = 0;
-          let bestRoadData: any = null;
-          let minRoadDist = Infinity;
+          let minStraightDist = Infinity;
 
-          // Calculate OSRM distance for all remaining candidates in this slot
+          // 1. PRE-SORT LOCALLY: Find the nearest neighbor using straight-line distance
           for (let i = 0; i < unvisited.length; i++) {
             const b = unvisited[i];
             const bLoc = { lat: b.location[0], lng: b.location[1] };
-            const roadData = await getRoadData(currentPos, bLoc);
+            const straightDist = getDistance(currentPos, bLoc);
             
-            if (roadData.distance < minRoadDist) {
-              minRoadDist = roadData.distance;
-              bestRoadData = roadData;
+            if (straightDist < minStraightDist) {
+              minStraightDist = straightDist;
               bestIdx = i;
             }
           }
 
+          // 2. FETCH ROAD DATA ONCE: Now that we have the "likely" winner, get OSRM data
           const nextBooking = unvisited[bestIdx];
           const nextLoc = { lat: nextBooking.location[0], lng: nextBooking.location[1] };
+          const bestRoadData = await getRoadData(currentPos, nextLoc);
 
-          totalStraightDist += getDistance(currentPos, nextLoc);
+          // 3. UPDATE TOTALS
+          totalStraightDist += minStraightDist;
           totalRoadDist += bestRoadData.distance;
 
           if (bestRoadData.coords) {
@@ -108,6 +126,7 @@ async function generateDailyRoute(dateString: string) {
             coordinate_route.push(...flattenedPath);
           }
 
+          // Move current position to the new job and remove it from unvisited
           currentPos = nextLoc;
           jobCount++;
           fullDailyRoute.push(nextBooking);
@@ -346,6 +365,62 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
     }
     console.error("❌ Critical error during booking:", error);
     res.status(500).json({ error: "Internal server error during booking." });
+  }
+});
+
+// Route 1: Create Order securely on the server
+app.post("/api/paypal/create-order", async (req: Request, res: Response) => {
+  try {
+    const accessToken = await generatePayPalAccessToken();
+    const { serviceName } = req.body;
+
+    const response = await fetch(`${PAYPAL_API_BASE}/v2/checkout/orders`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        intent: "CAPTURE",
+        purchase_units: [
+          {
+            description: `${serviceName || 'Service'} - Booking Deposit`,
+            amount: {
+              currency_code: "CAD",
+              value: "50.00", // SERVER-DEFINED: Cannot be tampered with by the client
+            },
+          },
+        ],
+      }),
+    });
+
+    const order = await response.json();
+    res.status(200).json({ id: order.id });
+  } catch (error) {
+    console.error("Failed to create order:", error);
+    res.status(500).json({ error: "Failed to create order." });
+  }
+});
+
+// Route 2: Capture Order securely on the server
+app.post("/api/paypal/capture-order", async (req: Request, res: Response) => {
+  try {
+    const { orderID } = req.body;
+    const accessToken = await generatePayPalAccessToken();
+
+    const response = await fetch(`${PAYPAL_API_BASE}/v2/checkout/orders/${orderID}/capture`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    const captureData = await response.json();
+    res.status(200).json(captureData);
+  } catch (error) {
+    console.error("Failed to capture order:", error);
+    res.status(500).json({ error: "Failed to capture order." });
   }
 });
 

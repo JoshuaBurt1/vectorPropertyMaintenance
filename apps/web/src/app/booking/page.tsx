@@ -597,35 +597,47 @@ export default function BookingPage() {
                         <PayPalButtons
                           style={{ layout: "vertical", shape: "rect" }}
                           disabled={isSubmitting}
-                          createOrder={(data, actions) => {
-                            return actions.order.create({
-                              intent: "CAPTURE",
-                              purchase_units: [
-                                {
-                                  description: `${formData.service} - Booking Deposit`,
-                                  amount: {
-                                    currency_code: "CAD",
-                                    value: "50.00",
-                                  },
-                                },
-                              ],
+                          createOrder={async () => {
+                            // 1. Call your backend to create the order securely
+                            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/paypal/create-order`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ serviceName: formData.service })
                             });
+                            
+                            const orderData = await response.json();
+                            
+                            if (orderData.id) {
+                              return orderData.id;
+                            } else {
+                              throw new Error("Failed to create PayPal order");
+                            }
                           }}
-                          onApprove={async (data, actions) => {
-                            if (actions.order) {
-                              try {
-                                const details = await actions.order.capture();
+                          onApprove={async (data) => {
+                            // 2. Call your backend to capture the order securely
+                            try {
+                              const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/paypal/capture-order`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ orderID: data.orderID }),
+                              });
+                              
+                              const details = await response.json();
+
+                              // Verify the capture was successful
+                              if (details.status === "COMPLETED") {
+                                // Extract the actual transaction ID from PayPal's response
+                                const transactionId = details.purchase_units[0].payments.captures[0].id;
                                 
-                                if (details?.id) {
-                                  await handleBookingSubmission(details.id);
-                                } else {
-                                  throw new Error("PayPal captured payment but did not return a Transaction ID.");
-                                }
-                                
-                              } catch (error) {
-                                console.error("PayPal Capture Error:", error);
-                                alert("Payment failed to capture. Please try again.");
+                                // Pass the verified transaction ID to your booking submission
+                                await handleBookingSubmission(transactionId); 
+                              } else {
+                                throw new Error("Transaction was not completed.");
                               }
+                              
+                            } catch (error) {
+                              console.error("PayPal Capture Error:", error);
+                              alert("Payment failed to capture or was declined. Please try again.");
                             }
                           }}
                         />
