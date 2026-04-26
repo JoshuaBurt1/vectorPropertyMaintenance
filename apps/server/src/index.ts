@@ -433,19 +433,6 @@ app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Prom
       return;
     }
 
-    /*
-    const logDoc = await db.collection("daily_log").doc(dateString).get();
-    let assignedRoute: any[] = [];
-    
-    // CHANGE 4: Ensure coordinate_route is treated as string array
-    let coordinate_route: string[] = []; 
-    
-    if (logDoc.exists) {
-      const logData = logDoc.data();
-      assignedRoute = logData?.route || [];
-      coordinate_route = logData?.coordinate_route || []; 
-    } */
-
     const routeData = await generateDailyRoute(dateString);
 
     const scheduleRef = db.collection("admin_workersSchedule").doc(dateString);
@@ -474,38 +461,102 @@ app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Prom
   }
 });
 
-// Scheduling Task: Runs every 15 minutes (this could be every 4 hours)
-cron.schedule("*/15 * * * *", async () => {
-  console.log("Running scheduled archiving task...");
+// COMBINED END-OF-DAY MAINTENANCE
+cron.schedule("29 23 * * *", async () => {
+  console.log("🚀 [EOD-MAINTENANCE] Starting tasks...");
+  
+  // 1. Get Today and Tomorrow in YYYY-MM-DD
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  
+  const tomorrowObj = new Date();
+  tomorrowObj.setDate(tomorrowObj.getDate() + 1);
+  const tomorrowStr = tomorrowObj.toLocaleDateString('en-CA');
+
+  console.log(`[DEBUG] Reference Dates -> Today: ${todayStr}, Tomorrow: ${tomorrowStr}`);
+
   try {
-    const todayStr = new Date().toISOString().split('T')[0];
-    
-    // Find all schedule documents where the date is strictly before today
-    const snapshot = await db.collection("schedule")
-      .where("dateString", "<", todayStr)
-      .get();
-
-    if (snapshot.empty) {
-      return;
-    }
-
     const batch = db.batch();
+    let writeCount = 0;
 
-    snapshot.docs.forEach((doc) => {
-      const data = doc.data();
-      const completedRef = db.collection("admin_complete").doc(doc.id);
+    // === PART 1: DELETE PAST RAW BOOKINGS (schedule collection) ===
+    console.log("[CLEANUP] Checking 'schedule' for past documents...");
+    const scheduleSnapshot = await db.collection("schedule").get();
+
+    scheduleSnapshot.docs.forEach((doc) => {
+      // Split "2026-04-25_Afternoon" to get just the date part
+      const docDate = doc.id.split('_')[0]; 
       
-      // Copy to admin_complete
-      batch.set(completedRef, data);
-      
-      // Delete from schedule
-      batch.delete(doc.ref);
+      if (docDate < todayStr) {
+        console.log(`[DELETE] Removing past schedule: ${doc.id}`);
+        batch.delete(doc.ref);
+        writeCount++;
+      }
     });
 
-    await batch.commit();
-    console.log(`Successfully archived ${snapshot.size} past schedule documents.`);
+    // === PART 2: ARCHIVE WORKER ROUTES (admin_workersSchedule collection) ===
+    console.log("[ARCHIVE] Checking 'admin_workersSchedule' for past assignments...");
+    const workerScheduleSnapshot = await db.collection("admin_workersSchedule").get();
+
+    workerScheduleSnapshot.docs.forEach((doc) => {
+      // Document IDs here are just "YYYY-MM-DD"
+      if (doc.id < todayStr) {
+        console.log(`[MOVE] Archiving past route: ${doc.id}`);
+        
+        // Destructure to drop coordinate_route
+        const { coordinate_route, ...archiveData } = doc.data();
+        const archiveRef = db.collection("admin_complete").doc(doc.id);
+        
+        batch.set(archiveRef, archiveData);
+        batch.delete(doc.ref);
+        writeCount++;
+      }
+    });
+
+    // Execute deletions and moves
+    if (writeCount > 0) {
+      await batch.commit();
+      console.log(`[MAINTENANCE] Cleaned/Archived ${writeCount} total documents.`);
+    }
+
+    // === PART 3: FAIL-SAFE TOMORROW ASSIGNMENT ===
+    console.log(`[FAIL-SAFE] Checking assignment for: ${tomorrowStr}`);
+    const tomorrowRef = db.collection("admin_workersSchedule").doc(tomorrowStr);
+    const tomorrowDoc = await tomorrowRef.get();
+    
+    if (tomorrowDoc.exists) {
+      console.log(`[FAIL-SAFE] ${tomorrowStr} is already assigned to ${tomorrowDoc.data()?.worker}.`);
+    } else {
+      const workersSnapshot = await db.collection("admin_workers")
+        .where("status", "==", "active") 
+        .get();
+      
+      if (!workersSnapshot.empty) {
+        const activeWorkers = workersSnapshot.docs.map(doc => doc.id);
+        const randomWorker = activeWorkers[Math.floor(Math.random() * activeWorkers.length)];
+
+        console.log(`[FAIL-SAFE] Generating route for ${randomWorker}...`);
+        const routeData = await generateDailyRoute(tomorrowStr);
+
+        await tomorrowRef.set({
+          worker: randomWorker,
+          date: tomorrowStr,
+          assignedRoute: routeData.route,
+          coordinate_route: routeData.coordinate_route,
+          distance: routeData.distance,
+          straightLineTotal: routeData.straightLineTotal,
+          updatedAt: new Date().toISOString(),
+          autoAssigned: true 
+        }, { merge: true });
+
+        console.log(`[FAIL-SAFE] Auto-assigned ${tomorrowStr} to ${randomWorker}.`);
+      } else {
+        console.error("[FAIL-SAFE] No active workers found to assign!");
+      }
+    }
+
+    console.log("✅ [EOD-MAINTENANCE] All tasks finished.");
   } catch (error) {
-    console.error("Error running cron task:", error);
+    console.error("❌ [EOD-MAINTENANCE Error]:", error);
   }
 });
 
