@@ -1,4 +1,5 @@
 //m_w/App.tsx
+
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -15,6 +16,8 @@ const Stack = createStackNavigator();
 export default function App() {
   const [worker, setWorker] = useState<any>(null);
   const [routeData, setRouteData] = useState<any[]>([]);
+  const [coordinateRoute, setCoordinateRoute] = useState<string[]>([]);
+  const [scheduleDocId, setScheduleDocId] = useState<string | null>(null);
   const [initializing, setInitializing] = useState(true);
 
   // 1. Session Management
@@ -35,6 +38,7 @@ export default function App() {
       } else {
         setWorker(null);
         setRouteData([]);
+        setCoordinateRoute([]);
       }
       if (initializing) setInitializing(false);
     });
@@ -48,6 +52,7 @@ export default function App() {
     if (!worker?.email || !worker?.name) return;
 
     const dateStr = format(new Date(), 'yyyy-MM-dd');
+    setScheduleDocId(dateStr); // Save the document ID to pass to Dashboard for updates
     const scheduleRef = doc(db, 'admin_workersSchedule', dateStr);
     
     const unsubscribeSchedule = onSnapshot(scheduleRef, (scheduleSnap) => {
@@ -55,13 +60,15 @@ export default function App() {
         const data = scheduleSnap.data();
         
         if (data.worker === worker.name) {
-          const allAssignedRoutes = data.assignedRoute || [];
-          setRouteData(allAssignedRoutes);
+          setRouteData(data.assignedRoute || []);
+          setCoordinateRoute(data.coordinate_route || []);
         } else {
           setRouteData([]);
+          setCoordinateRoute([]);
         }
       } else {
         setRouteData([]);
+        setCoordinateRoute([]);
       }
     }, (error) => {
       console.error("Schedule Listener Error:", error);
@@ -76,6 +83,7 @@ export default function App() {
       await signOut(auth);
       setWorker(null);
       setRouteData([]);
+      setCoordinateRoute([]);
     } catch (e) {
       console.error("Logout failed", e);
     }
@@ -87,7 +95,6 @@ export default function App() {
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!worker ? (
-          /* When worker is null, this screen mounts fresh */
           <Stack.Screen name="Login">
             {(props) => <LoginScreen {...props} onLogin={setWorker} />}
           </Stack.Screen>
@@ -98,6 +105,8 @@ export default function App() {
                 {...props} 
                 worker={worker} 
                 routes={routeData} 
+                coordinateRoute={coordinateRoute}
+                scheduleDocId={scheduleDocId}
                 onLogout={handleLogout} 
               />
             )}

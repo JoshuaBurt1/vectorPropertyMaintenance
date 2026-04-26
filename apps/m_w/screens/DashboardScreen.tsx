@@ -1,43 +1,25 @@
 // apps/m_w/DashboardScreen.tsx
+
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Dimensions, Alert } from 'react-native';
 import { WebView } from 'react-native-webview';
-
 import { format } from 'date-fns';
-
-// Free OpenStreetMap Raster Tiles
-const osmStyle = {
-  version: 8,
-  sources: {
-    osm: {
-      type: 'raster',
-      tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
-      tileSize: 256,
-      attribution: '&copy; OpenStreetMap',
-    },
-  },
-  layers: [
-    {
-      id: 'osm-layer',
-      type: 'raster',
-      source: 'osm',
-      minzoom: 0,
-      maxzoom: 19,
-    },
-  ],
-};
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '../firebaseConfig';
 
 interface Job {
   address: string;
   service: string;
   email: string;
   status?: string;
+  period?: string;
   location?: [number, number];
   lat: number;
   lng: number;
+  originalIndex: number;
 }
 
-export default function DashboardScreen({ worker, routes, onLogout }: any) {
+export default function DashboardScreen({ worker, routes, coordinateRoute, scheduleDocId, onLogout }: any) {
   const [isReady, setIsReady] = useState(false);
   const webViewRef = useRef<WebView>(null); 
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -53,82 +35,88 @@ export default function DashboardScreen({ worker, routes, onLogout }: any) {
   // 2. DATA NORMALIZATION
   const formattedRoutes = useMemo(() => {
     return (routes || [])
-      .map((job: any) => ({
+      .map((job: any, index: number) => ({
         ...job,
+        originalIndex: index, // Track original index for Firestore array updates
         lat: job.lat || (Array.isArray(job.location) ? job.location[0] : 0),
         lng: job.lng || (Array.isArray(job.location) ? job.location[1] : 0),
       }))
-      // Ensure we have coordinates to display
       .filter((job: any) => job.lat !== 0 && job.lng !== 0)
-      // CHANGE: Sort by index to ensure the 0, 1, 2 sequence is respected
       .sort((a: any, b: any) => (a.index ?? 0) - (b.index ?? 0));
   }, [routes]);
 
   const leafletHTML = useMemo(() => {
-  const points = JSON.stringify(formattedRoutes.map((j: any) => [j.lat, j.lng]));
-
-  // Generate markers logic
-  const markersJS = formattedRoutes.map((j: any, i: number) => `
-    L.circleMarker([${j.lat}, ${j.lng}], {
-      radius: ${selectedIndex === i ? 10 : 7},
-      fillColor: "${selectedIndex === i ? '#3498db' : '#e74c3c'}",
-      color: "#fff",
-      weight: 2,
-      fillOpacity: 1
-    }).addTo(map);
-  `).join('');
-
-  return `
-    <!DOCTYPE html>
-      <html>
-        <head>
-          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-          <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-          <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-          <style>
-            body { margin: 0; padding: 0; }
-            #map { height: 100vh; width: 100vw; background: #f8f9fa; }
-            .leaflet-control-attribution { display: none; }
-          </style>
-        </head>
-        <body>
-          <div id="map"></div>
-          <script>
-            var map = L.map('map', { zoomControl: false });
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-            
-            var routePoints = ${points};
-            if (routePoints.length > 0) {
-              var polyline = L.polyline(routePoints, {color: '#3498db', weight: 4, opacity: 0.7}).addTo(map);
-              map.fitBounds(polyline.getBounds(), { padding: [40, 40] });
-            }
-            ${markersJS}
-          </script>
-        </body>
-      </html>
-    `;
-  }, [formattedRoutes, selectedIndex]);
-
-  // 3. CAMERA BOUNDS CALCULATOR
-  const getBounds = useCallback((routesToFit: Job[]) => {
-    if (!routesToFit.length) return null;
-    let minLng = routesToFit[0].lng, maxLng = routesToFit[0].lng;
-    let minLat = routesToFit[0].lat, maxLat = routesToFit[0].lat;
-    
-    routesToFit.forEach(r => {
-      if (r.lng < minLng) minLng = r.lng;
-      if (r.lng > maxLng) maxLng = r.lng;
-      if (r.lat < minLat) minLat = r.lat;
-      if (r.lat > maxLat) maxLat = r.lat;
+    // Parse coordinate_route (which is ["lng,lat"]) into [[lat, lng]] for Leaflet polyline
+    const polylineCoords = (coordinateRoute || []).map((coordStr: string) => {
+      const [lng, lat] = coordStr.split(',').map(Number);
+      return [lat, lng];
     });
-    
-    return { ne: [maxLng, maxLat], sw: [minLng, minLat] };
-  }, []);
 
-  // 4. EVENT HANDLERS
+    const routePolylineString = JSON.stringify(polylineCoords);
+
+    // Generate custom numbered markers
+    const markersJS = formattedRoutes.map((j: any, i: number) => {
+      let color = '#95a5a6'; // Default Gray
+      if (j.status === 'completed') color = '#2ecc71'; // Green
+      else if (j.period === 'morning') color = '#f39c12'; // Orange
+      else if (j.period === 'afternoon') color = '#3498db'; // Blue
+      else if (j.period === 'evening') color = '#9b59b6'; // Purple
+
+      const isSelected = selectedIndex === i;
+      const size = isSelected ? 32 : 24;
+      const border = isSelected ? 'border: 3px solid #333;' : 'border: 2px solid #fff;';
+      const zIndexOffset = isSelected ? 1000 : 0;
+
+      return `
+        var icon${i} = L.divIcon({
+          className: 'custom-numbered-marker',
+          html: "<div style='background-color:${color}; width:${size}px; height:${size}px; border-radius:50%; ${border} display:flex; justify-content:center; align-items:center; color:white; font-weight:bold; font-size:${isSelected ? '14px' : '12px'}; box-shadow: 0 2px 5px rgba(0,0,0,0.3);'>${j.originalIndex + 1}</div>",
+          iconSize: [${size}, ${size}],
+          iconAnchor: [${size/2}, ${size/2}]
+        });
+        L.marker([${j.lat}, ${j.lng}], { icon: icon${i}, zIndexOffset: ${zIndexOffset} }).addTo(map);
+      `;
+    }).join('');
+
+    return `
+      <!DOCTYPE html>
+        <html>
+          <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+            <style>
+              body { margin: 0; padding: 0; }
+              #map { height: 100vh; width: 100vw; background: #f8f9fa; }
+              .leaflet-control-attribution { display: none; }
+            </style>
+          </head>
+          <body>
+            <div id="map"></div>
+            <script>
+              var map = L.map('map', { zoomControl: false });
+              L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+              
+              var routePolyline = ${routePolylineString};
+              if (routePolyline.length > 0) {
+                var polyline = L.polyline(routePolyline, {color: '#2980b9', weight: 5, opacity: 0.8}).addTo(map);
+                map.fitBounds(polyline.getBounds(), { padding: [40, 40] });
+              } else if (${formattedRoutes.length} > 0) {
+                // Fallback to bounds of points if no route polyline exists
+                var bounds = L.latLngBounds(${JSON.stringify(formattedRoutes.map((j: any) => [j.lat, j.lng]))});
+                map.fitBounds(bounds, { padding: [40, 40] });
+              }
+              
+              ${markersJS}
+            </script>
+          </body>
+        </html>
+    `;
+  }, [formattedRoutes, selectedIndex, coordinateRoute]);
+
+  // 3. EVENT HANDLERS
   const handleJobPress = (job: any, index: number) => {
     setSelectedIndex(index);
-    
     const flyToCode = `
       map.setView([${job.lat}, ${job.lng}], 16, {
         animate: true,
@@ -138,7 +126,26 @@ export default function DashboardScreen({ worker, routes, onLogout }: any) {
     webViewRef.current?.injectJavaScript(flyToCode);
   };
 
-  // 5. RENDER GATES
+  const handleCompleteJob = async (originalIndex: number) => {
+    if (!scheduleDocId) return;
+    try {
+      // Create a shallow copy of the exact routes array passed from Firebase
+      const updatedRoutes = [...routes];
+      updatedRoutes[originalIndex].status = 'completed';
+
+      const scheduleRef = doc(db, 'admin_workersSchedule', scheduleDocId);
+      await updateDoc(scheduleRef, {
+        assignedRoute: updatedRoutes
+      });
+      
+      Alert.alert("Success", "Job marked as completed!");
+    } catch (error) {
+      console.error("Error completing job:", error);
+      Alert.alert("Error", "Could not update job status.");
+    }
+  };
+
+  // 4. RENDER GATES
   if (!isReady) {
     return (
       <View style={styles.centered}>
@@ -169,7 +176,7 @@ export default function DashboardScreen({ worker, routes, onLogout }: any) {
               originWhitelist={['*']}
               source={{ html: leafletHTML }}
               style={styles.map}
-              scrollEnabled={false} // Prevents user from scrolling the whole page instead of map
+              scrollEnabled={false}
             />
           </View>
 
@@ -185,12 +192,33 @@ export default function DashboardScreen({ worker, routes, onLogout }: any) {
                 ]}
                 onPress={() => handleJobPress(item, index)}
               >
+                <View style={styles.markerBadgeContainer}>
+                   <View style={[
+                     styles.numberBadge, 
+                     { backgroundColor: item.status === 'completed' ? '#2ecc71' : (item.period === 'morning' ? '#f39c12' : item.period === 'afternoon' ? '#3498db' : item.period === 'evening' ? '#9b59b6' : '#95a5a6') }
+                   ]}>
+                     <Text style={styles.numberBadgeText}>{item.originalIndex + 1}</Text>
+                   </View>
+                </View>
+
                 <View style={styles.jobInfo}>
                   <Text style={styles.addressText}>{item.address}</Text>
-                  <Text style={styles.serviceText}>{item.service}</Text>
+                  <Text style={styles.serviceText}>{item.service} • {item.period ? item.period.charAt(0).toUpperCase() + item.period.slice(1) : 'Anytime'}</Text>
                 </View>
-                <View style={[styles.statusBadge, { backgroundColor: item.status === 'completed' ? '#2ecc71' : '#f1c40f' }]}>
-                   <Text style={styles.statusText}>{item.status || 'Pending'}</Text>
+                
+                <View style={styles.actionContainer}>
+                  <View style={[styles.statusBadge, { backgroundColor: item.status === 'completed' ? '#2ecc71' : '#f1c40f' }]}>
+                     <Text style={styles.statusText}>{item.status || 'Pending'}</Text>
+                  </View>
+                  
+                  {item.status !== 'completed' && (
+                    <TouchableOpacity 
+                      style={styles.completeBtn} 
+                      onPress={() => handleCompleteJob(item.originalIndex)}
+                    >
+                      <Text style={styles.completeBtnText}>Complete</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </TouchableOpacity>
             )}
@@ -225,7 +253,7 @@ const styles = StyleSheet.create({
   mapContainer: { 
     height: Dimensions.get('window').height * 0.4, 
     width: '100%',
-    overflow: 'hidden', // Keeps the WebView rounded if you add borderRadius
+    overflow: 'hidden', 
     backgroundColor: '#eee'
   },
   
@@ -235,22 +263,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#eee'
   },
-  
-  // Custom MapLibre Marker Styles
-  markerBase: {
-    height: 18,
-    width: 18,
-    backgroundColor: '#e74c3c',
-    borderRadius: 9,
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  markerSelected: {
-    backgroundColor: '#3498db',
-    height: 22,
-    width: 22,
-    borderRadius: 11,
-  },
 
   listContent: { padding: 15 },
   jobItem: { 
@@ -258,11 +270,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: '#fff',
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
-    elevation: 2, // Android shadow
-    shadowColor: '#000', // iOS shadow
+    elevation: 2,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4
@@ -272,11 +283,46 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     backgroundColor: '#f0f9ff'
   },
+  
+  markerBadgeContainer: {
+    marginRight: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  numberBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  numberBadgeText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+
   jobInfo: { flex: 1 },
   addressText: { fontSize: 16, fontWeight: 'bold', color: '#333' },
-  serviceText: { color: '#7f8c8d', marginTop: 4 },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
+  serviceText: { color: '#7f8c8d', marginTop: 4, fontSize: 13 },
+  
+  actionContainer: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, marginBottom: 8 },
   statusText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
+  completeBtn: {
+    backgroundColor: '#3498db',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  completeBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold'
+  },
   
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   noRouteText: { fontSize: 18, color: '#95a5a6', fontWeight: '500' },
