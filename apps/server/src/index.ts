@@ -24,21 +24,15 @@ function getDistance(p1: { lat: number; lng: number }, p2: { lat: number; lng: n
 // --- Helper for Road Distance & Geometry ---
 async function getRoadData(p1: { lat: number; lng: number }, p2: { lat: number; lng: number }): Promise<{ distance: number, coords: number[][] }> {
   try {
-    // Calculate Haversine (Straight Line) for comparison
     const straightLineDist = getDistance(p1, p2);
-    
-    // overview=full gives the detailed path. geometries=geojson returns [lng, lat] arrays.
     const url = `https://router.project-osrm.org/route/v1/driving/${p1.lng},${p1.lat};${p2.lng},${p2.lat}?overview=full&geometries=geojson`;
     const res = await fetch(url);
     const data = await res.json();
     
     if (data.routes && data.routes[0]) {
       const roadDistKm = data.routes[0].distance / 1000;
-      
-      // Calculate the "Curvature Factor" (Road Distance / Straight Distance)
       const ratio = straightLineDist > 0 ? (roadDistKm / straightLineDist).toFixed(2) : "1.00";
 
-      // COMPARISON LOG
       console.log(
         `[Distance Check] \n` +
         `   Straight Line: ${straightLineDist.toFixed(2)} km \n` +
@@ -48,7 +42,7 @@ async function getRoadData(p1: { lat: number; lng: number }, p2: { lat: number; 
 
       return {
         distance: roadDistKm,
-        coords: data.routes[0].geometry.coordinates // Array of [lng, lat]
+        coords: data.routes[0].geometry.coordinates 
       };
     }
     return { distance: 0, coords: [] };
@@ -81,29 +75,49 @@ async function generateDailyRoute(dateString: string) {
       const bookings = data?.bookings || [];
 
       if (bookings.length > 0) {
-        // Sort bookings by proximity to the last location
-        bookings.sort((a: any, b: any) => {
-          const distA = getDistance(currentPos, { lat: a.location[0], lng: a.location[1] });
-          const distB = getDistance(currentPos, { lat: b.location[0], lng: b.location[1] });
-          return distA - distB;
-        });
+        // Greedy approach: Order by nearest OSRM distance inside the slot
+        let unvisited = [...bookings];
+        let sortedBookingsForSlot = [];
 
-        for (const b of bookings) {
-          const bLoc = { lat: b.location[0], lng: b.location[1] };
-          totalStraightDist += getDistance(currentPos, bLoc);
-          
-          const roadData = await getRoadData(currentPos, bLoc);
-          totalRoadDist += roadData.distance;
+        while (unvisited.length > 0) {
+          let bestIdx = 0;
+          let bestRoadData: any = null;
+          let minRoadDist = Infinity;
 
-          const flattenedPath = roadData.coords.map(coord => `${coord[0]},${coord[1]}`);
-          coordinate_route.push(...flattenedPath); 
-          
-          currentPos = bLoc;
+          // Calculate OSRM distance for all remaining candidates in this slot
+          for (let i = 0; i < unvisited.length; i++) {
+            const b = unvisited[i];
+            const bLoc = { lat: b.location[0], lng: b.location[1] };
+            const roadData = await getRoadData(currentPos, bLoc);
+            
+            if (roadData.distance < minRoadDist) {
+              minRoadDist = roadData.distance;
+              bestRoadData = roadData;
+              bestIdx = i;
+            }
+          }
+
+          const nextBooking = unvisited[bestIdx];
+          const nextLoc = { lat: nextBooking.location[0], lng: nextBooking.location[1] };
+
+          totalStraightDist += getDistance(currentPos, nextLoc);
+          totalRoadDist += bestRoadData.distance;
+
+          if (bestRoadData.coords) {
+            const flattenedPath = bestRoadData.coords.map((coord: any[]) => `${coord[0]},${coord[1]}`);
+            coordinate_route.push(...flattenedPath);
+          }
+
+          currentPos = nextLoc;
           jobCount++;
-          fullDailyRoute.push(b);
+          fullDailyRoute.push(nextBooking);
+          sortedBookingsForSlot.push(nextBooking);
+
+          unvisited.splice(bestIdx, 1);
         }
-        // Save the sorted order back to the slot document
-        batch.update(docRef, { bookings });
+
+        // Save the OSRM-sorted order back to the slot document
+        batch.update(docRef, { bookings: sortedBookingsForSlot });
       }
     }
   }
@@ -112,8 +126,10 @@ async function generateDailyRoute(dateString: string) {
   totalStraightDist += getDistance(currentPos, HOME_BASE);
   const finalReturnRoad = await getRoadData(currentPos, HOME_BASE);
   totalRoadDist += finalReturnRoad.distance;
-  const flattenedReturn = finalReturnRoad.coords.map(coord => `${coord[0]},${coord[1]}`);
-  coordinate_route.push(...flattenedReturn);
+  if (finalReturnRoad.coords) {
+    const flattenedReturn = finalReturnRoad.coords.map((coord: any[]) => `${coord[0]},${coord[1]}`);
+    coordinate_route.push(...flattenedReturn);
+  }
 
   // Commit the sorted bookings to the schedule slots
   await batch.commit();
@@ -132,10 +148,8 @@ async function generateDailyRoute(dateString: string) {
 let serviceAccount;
 
 if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-  // Use the environment variable
   serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 } else {
-  // Fall back to local file for localhost development
   const serviceAccountPath = path.resolve(__dirname, "../service-account.json");
   serviceAccount = require(serviceAccountPath);
 }
@@ -162,9 +176,7 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile or Postman)
     if (!origin) return callback(null, true);
-    
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
@@ -182,18 +194,14 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-
-// GET SCHEDULES ENDPOINT: reads the database so the frontend knows which slots are taken.
 app.get("/api/schedule", async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
-    // Only fetching dates from today onwards to save read costs
     const todayStr = new Date().toLocaleDateString('en-CA');
     const snapshot = await db.collection("schedule")
       .where("dateString", ">=", todayStr)
       .get();
     
-    // send the dates, timeSlots, and fullness count to the frontend
     const bookings = snapshot.docs.map(doc => {
       const data = doc.data();
       return {
@@ -217,21 +225,16 @@ app.get("/api/schedule/stream", (req, res) => {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
-  // Add this user to notification list
   clients.push(res);
-
-  // Remove them when they close the tab
   req.on("close", () => {
     clients = clients.filter(client => client !== res);
   });
 });
 
-// Create a function to shout to everyone
 const broadcastUpdate = (data: any) => {
   clients.forEach(client => client.write(`data: ${JSON.stringify(data)}\n\n`));
 };
 
-// BOOKING ENDPOINT
 app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
   try {
     const { name, email, address, location, service, date, timeSlot } = req.body;
@@ -247,7 +250,6 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
 
     if (isToday) {
       let isExpired = false;
-      // Check if current time has hit the start of the period
       if (timeSlot.startsWith("Morning") && currentHour >= 8) isExpired = true;
       if (timeSlot.startsWith("Afternoon") && currentHour >= 12) isExpired = true;
       if (timeSlot.startsWith("Evening") && currentHour >= 16) isExpired = true;
@@ -261,9 +263,9 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
     }
 
     const dateObj = new Date(date);
-    const dateString = dateObj.toISOString().split('T')[0]; // "YYYY-MM-DD"
-    const slotSlug = timeSlot.split(' ')[0]; // extracts "Morning", "Afternoon", or "Evening"
-    const documentId = `${dateString}_${slotSlug}`; // document ID
+    const dateString = dateObj.toISOString().split('T')[0]; 
+    const slotSlug = timeSlot.split(' ')[0]; 
+    const documentId = `${dateString}_${slotSlug}`; 
 
     await db.runTransaction(async (t) => {
       const slotRef = db.collection("schedule").doc(documentId);
@@ -286,7 +288,7 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
         service,
         period: slotSlug.toLowerCase(),
         originalDate: date,
-        transactionId: req.body.transactionId,
+        transactionId: req.body.transactionId || `tx_${new Date().getTime()}`,
         status: "pending",
         createdAt: new Date().toISOString()
       });
@@ -298,10 +300,9 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
       }, { merge: true });
     });
 
-    console.log(`[BOOKING] Slot updated & Route Optimized: ${documentId}`);
+    console.log(`[BOOKING] Slot updated: ${documentId}. Route optimization queued for background sync.`);
     broadcastUpdate({ type: "REFRESH_SCHEDULE", documentId });
 
-    // 2. Wrap Email in a separate try/catch so it doesn't break the response
     try {
       const formattedDate = new Date(date).toLocaleDateString('en-US', {
         weekday: 'long',
@@ -336,7 +337,6 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
       console.error("❌ Failed to send confirmation email:", emailError);
     }
 
-    // 3. Always return success if the DB write worked
     res.status(201).json({ success: true, documentId });
     
   } catch (error: any) {
@@ -349,23 +349,17 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// ADMIN ENDPOINT: Create a new Field Worker account
 app.post("/api/admin/create-worker", async (req: Request, res: Response): Promise<void> => {
-  console.log("Incoming Headers:", req.headers['content-type']);
-  console.log("Incoming Body:", req.body);
   try {
     const { email, fullName, phoneNumber } = req.body;
 
-    // Basic validation
     if (!email || !fullName) {
       res.status(400).json({ error: "Email and Full Name are required." });
       return;
     }
 
-    // 1. Generate a temporary password
     const temporaryPassword = `Vector${Math.floor(1000 + Math.random() * 9000)}!`;
 
-    // 2. Create the user in Firebase Auth
     const userRecord = await admin.auth().createUser({
       email,
       password: temporaryPassword,
@@ -373,7 +367,6 @@ app.post("/api/admin/create-worker", async (req: Request, res: Response): Promis
       phoneNumber: phoneNumber || undefined,
     });
 
-    // 3. Initialize the Worker Profile in Firestore
     await db.collection("admin_workers").doc(fullName).set({
       uid: userRecord.uid,
       name: fullName,
@@ -385,7 +378,6 @@ app.post("/api/admin/create-worker", async (req: Request, res: Response): Promis
       createdAt: new Date().toISOString(),
     });
 
-    // 4. Send Invitation Email
     try {
       const mailOptions = {
         from: `"Vector Admin" <${process.env.EMAIL_USER}>`,
@@ -423,7 +415,6 @@ app.post("/api/admin/create-worker", async (req: Request, res: Response): Promis
   }
 });
 
-// Assign work schedule to a worker
 app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Promise<void> => {
   try {
     const { workerName, dateString } = req.body;
@@ -434,10 +425,9 @@ app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Prom
     }
 
     const routeData = await generateDailyRoute(dateString);
-
     const scheduleRef = db.collection("admin_workersSchedule").doc(dateString);
     
-   await scheduleRef.set({
+    await scheduleRef.set({
       worker: workerName,
       date: dateString,
       assignedRoute: routeData.route,
@@ -461,24 +451,94 @@ app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Prom
   }
 });
 
-// COMBINED END-OF-DAY MAINTENANCE
-cron.schedule("38 23 * * *", async () => {
-  console.log("🚀 [EOD-MAINTENANCE] Starting tasks...");
-  
-  // 1. Get Today and Tomorrow in YYYY-MM-DD
-  const todayStr = new Date().toLocaleDateString('en-CA');
-  
-  const tomorrowObj = new Date();
-  tomorrowObj.setDate(tomorrowObj.getDate() + 1);
-  const tomorrowStr = tomorrowObj.toLocaleDateString('en-CA');
 
-  console.log(`[DEBUG] Reference Dates -> Today: ${todayStr}, Tomorrow: ${tomorrowStr}`);
+// =========================================================
+// BACKGROUND CRON TASKS
+// =========================================================
+
+// 1. ROUTE SYNC & OPTIMIZATION (Runs Every 15 Minutes)
+cron.schedule("*/15 * * * *", async () => {
+  console.log("⏳ [15-MIN SYNC] Checking for unoptimized routes across all active days...");
+  
+  try {
+    const todayStr = new Date().toLocaleDateString('en-CA');
+    const scheduleSnapshot = await db.collection("schedule").where("dateString", ">=", todayStr).get();
+    
+    const uniqueDates = new Set<string>();
+    scheduleSnapshot.docs.forEach((doc) => uniqueDates.add(doc.data().dateString));
+
+    for (const dateStr of uniqueDates) {
+      const scheduleRef = db.collection("admin_workersSchedule").doc(dateStr);
+      const scheduleDoc = await scheduleRef.get();
+
+      // Gather all raw bookings currently slated for this day across all periods
+      const slots = ["Morning", "Afternoon", "Evening"];
+      let rawBookings: any[] = [];
+      
+      for (const slot of slots) {
+        const slotDoc = await db.collection("schedule").doc(`${dateStr}_${slot}`).get();
+        if (slotDoc.exists) {
+          rawBookings.push(...(slotDoc.data()?.bookings || []));
+        }
+      }
+
+      let workerToAssign: string | null = null;
+      let existingBookings: any[] = [];
+
+      if (scheduleDoc.exists) {
+        workerToAssign = scheduleDoc.data()?.worker;
+        existingBookings = scheduleDoc.data()?.assignedRoute || [];
+      } else {
+        const workersSnapshot = await db.collection("admin_workers").where("status", "==", "active").get();
+        if (!workersSnapshot.empty) {
+          const activeWorkers = workersSnapshot.docs.map(doc => doc.id);
+          workerToAssign = activeWorkers[Math.floor(Math.random() * activeWorkers.length)];
+        }
+      }
+
+      if (!workerToAssign) continue;
+
+      // Extract unique identifiers (like createdAt) to test if the array has actually changed
+      const rawIds = rawBookings.map(b => b.createdAt).sort().join("|");
+      const existingIds = existingBookings.map(b => b.createdAt).sort().join("|");
+
+      // API Savings Check: Skip recalculation if the bookings haven't changed!
+      if (scheduleDoc.exists && rawIds === existingIds) {
+        continue;
+      }
+
+      console.log(`[SYNC] Updating route for ${dateStr}. Diff detected, pulling fresh OSRM data...`);
+      const routeData = await generateDailyRoute(dateStr);
+
+      await scheduleRef.set({
+        worker: workerToAssign,
+        date: dateStr,
+        assignedRoute: routeData.route,
+        coordinate_route: routeData.coordinate_route,
+        distance: routeData.distance,
+        straightLineTotal: routeData.straightLineTotal,
+        updatedAt: new Date().toISOString(),
+        autoAssigned: scheduleDoc.exists ? (scheduleDoc.data()?.autoAssigned || false) : true 
+      }, { merge: true });
+    }
+  } catch (error) {
+    console.error("❌ [15-MIN SYNC Error]:", error);
+  }
+});
+
+
+// 2. END OF DAY MAINTENANCE (Runs at 11:38 PM)
+cron.schedule("15 21 * * *", async () => {
+  console.log("🚀 [EOD-MAINTENANCE] Starting cleanup tasks...");
+  
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  console.log(`[DEBUG] Reference Date -> Today: ${todayStr}`);
 
   try {
     const batch = db.batch();
     let writeCount = 0;
 
-    // PART 1: DELETE PAST RAW BOOKINGS (schedule collection)
+    // PART 1: DELETE PAST RAW BOOKINGS
     console.log("[CLEANUP] Checking 'schedule' for past documents...");
     const scheduleSnapshot = await db.collection("schedule").get();
 
@@ -492,16 +552,13 @@ cron.schedule("38 23 * * *", async () => {
       }
     });
 
-    // === PART 2: ARCHIVE WORKER ROUTES (admin_workersSchedule collection) ===
+    // PART 2: ARCHIVE WORKER ROUTES
     console.log("[ARCHIVE] Checking 'admin_workersSchedule' for past assignments...");
     const workerScheduleSnapshot = await db.collection("admin_workersSchedule").get();
 
     workerScheduleSnapshot.docs.forEach((doc) => {
-      // Document IDs here are just "YYYY-MM-DD"
       if (doc.id < todayStr) {
         console.log(`[MOVE] Archiving past route: ${doc.id}`);
-        
-        // Destructure to drop coordinate_route
         const { coordinate_route, ...archiveData } = doc.data();
         const archiveRef = db.collection("admin_complete").doc(doc.id);
         
@@ -511,58 +568,12 @@ cron.schedule("38 23 * * *", async () => {
       }
     });
 
-    // Execute deletions and moves
     if (writeCount > 0) {
       await batch.commit();
       console.log(`[MAINTENANCE] Cleaned/Archived ${writeCount} total documents.`);
     }
 
-    // === PART 3: FAIL-SAFE & UPDATE TOMORROW ASSIGNMENT ===
-    console.log(`[MAINTENANCE] Updating/Assigning schedule for: ${tomorrowStr}`);
-    const tomorrowRef = db.collection("admin_workersSchedule").doc(tomorrowStr);
-    const tomorrowDoc = await tomorrowRef.get();
-
-    let workerToAssign: string | null = null;
-
-    if (tomorrowDoc.exists) {
-      // If already assigned, keep the same worker but update their route
-      workerToAssign = tomorrowDoc.data()?.worker;
-      console.log(`[UPDATE] Refreshing route for existing worker: ${workerToAssign}`);
-    } else {
-      // If not assigned, pick a random active worker
-      const workersSnapshot = await db.collection("admin_workers")
-        .where("status", "==", "active") 
-        .get();
-      
-      if (!workersSnapshot.empty) {
-        const activeWorkers = workersSnapshot.docs.map(doc => doc.id);
-        workerToAssign = activeWorkers[Math.floor(Math.random() * activeWorkers.length)];
-        console.log(`[FAIL-SAFE] No assignment found. Picking random worker: ${workerToAssign}`);
-      }
-    }
-
-    if (workerToAssign) {
-      // Generate the fresh route data (this captures any bookings made after the last assignment)
-      const routeData = await generateDailyRoute(tomorrowStr);
-
-      await tomorrowRef.set({
-        worker: workerToAssign,
-        date: tomorrowStr,
-        assignedRoute: routeData.route,
-        coordinate_route: routeData.coordinate_route,
-        distance: routeData.distance,
-        straightLineTotal: routeData.straightLineTotal,
-        updatedAt: new Date().toISOString(),
-        // Mark as auto-assigned only if it didn't exist before
-        autoAssigned: tomorrowDoc.exists ? (tomorrowDoc.data()?.autoAssigned || false) : true 
-      }, { merge: true });
-
-      console.log(`[SUCCESS] Schedule for ${tomorrowStr} is up-to-date for ${workerToAssign}.`);
-    } else {
-      console.error("[ERROR] Could not find a worker to assign for tomorrow.");
-    }
-
-    console.log("✅ [EOD-MAINTENANCE] All tasks finished.");
+    console.log("✅ [EOD-MAINTENANCE] Finished.");
   } catch (error) {
     console.error("❌ [EOD-MAINTENANCE Error]:", error);
   }
