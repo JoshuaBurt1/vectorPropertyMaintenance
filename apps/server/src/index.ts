@@ -660,6 +660,10 @@ cron.schedule("15 21 * * *", async () => {
   }
 });
 
+app.get("/", (req, res) => {
+  res.send("Vector Property Maintenance API is Live.");
+});
+
 app.get("/health", (req, res) => {
   res.json({ status: "API is running, scheduler is active." });
 });

@@ -5,10 +5,15 @@ import { useState, useEffect } from "react";
 const words = ["home.", "office.", "garage.", "warehouse.", "garden.", "front yard.", "backroom.", "parking lot."];
 
 export default function Typewriter() {
+  const [hasMounted, setHasMounted] = useState(false);  
   const [index, setIndex] = useState(0);
   const [subIndex, setSubIndex] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
   const [blink, setBlink] = useState(true);
+
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
 
   // Blinking cursor effect
   useEffect(() => {
@@ -20,8 +25,10 @@ export default function Typewriter() {
 
   // Typing logic
   useEffect(() => {
+    if (!hasMounted) return;
+
     if (subIndex === words[index].length + 1 && !isDeleting) {
-      setTimeout(() => setIsDeleting(true), 2000); // Pause before deleting
+      setTimeout(() => setIsDeleting(true), 2000);
       return;
     }
 
@@ -33,10 +40,14 @@ export default function Typewriter() {
 
     const timeout = setTimeout(() => {
       setSubIndex((prev) => prev + (isDeleting ? -1 : 1));
-    }, isDeleting ? 50 : 120); // Faster deletion, slower typing
+    }, isDeleting ? 50 : 120);
 
     return () => clearTimeout(timeout);
-  }, [subIndex, index, isDeleting]);
+  }, [subIndex, index, isDeleting, hasMounted]);
+
+  if (!hasMounted) {
+    return <span className="inline-block">{words[0]}</span>;
+  }
 
   return (
     <span className="inline-block">

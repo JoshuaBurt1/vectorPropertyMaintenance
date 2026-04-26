@@ -7,9 +7,9 @@ import { PayPalScriptProvider, PayPalButtons } from "@paypal/react-paypal-js";
 import dynamic from 'next/dynamic';
 import 'leaflet/dist/leaflet.css';
 
-const API_BASE_URL = process.env.NODE_ENV === "production" 
-  ? "https://vectorpropertymaintenance.onrender.com" 
-  : "http://localhost:8080";
+const API_BASE = typeof window !== "undefined" && window.location.hostname === "localhost"
+    ? "http://localhost:8080"
+    : "https://vectorpropertymaintenance.onrender.com";
 
 const OPENCAGE_API_KEY = process.env.NEXT_PUBLIC_OPENCAGE_API_KEY;
 const HOME_BASE = { lat: 44.3894, lng: -79.6903 }; 
@@ -103,7 +103,7 @@ export default function BookingPage() {
   const isAtMinWeek = currentWeekStart.getTime() <= startOfActualWeek.getTime();
 
   useEffect(() => {
-    const eventSource = new EventSource(`${API_BASE_URL}/api/schedule/stream`);
+    const eventSource = new EventSource(`${API_BASE}/api/schedule/stream`);
 
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -149,7 +149,7 @@ export default function BookingPage() {
     }, 2000);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/schedule`);
+      const response = await fetch(`${API_BASE}/api/schedule`);
       if (response.ok) {
         const data = await response.json();
         setBookedSlots(data);
@@ -191,7 +191,7 @@ export default function BookingPage() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/book`, {
+      const response = await fetch(`${API_BASE}/api/book`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -623,25 +623,21 @@ export default function BookingPage() {
                           style={{ layout: "vertical", shape: "rect" }}
                           disabled={isSubmitting}
                           createOrder={async () => {
-                            // 1. Call your backend to create the order securely
-                            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/paypal/create-order`, {
+                            // 2. Just use the global API_BASE here
+                            const response = await fetch(`${API_BASE}/api/paypal/create-order`, {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
                               body: JSON.stringify({ serviceName: formData.service })
                             });
                             
                             const orderData = await response.json();
-                            
-                            if (orderData.id) {
-                              return orderData.id;
-                            } else {
-                              throw new Error("Failed to create PayPal order");
-                            }
+                            if (orderData.id) return orderData.id;
+                            throw new Error("Failed to create PayPal order");
                           }}
                           onApprove={async (data) => {
-                            // 2. Call your backend to capture the order securely
                             try {
-                              const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/paypal/capture-order`, {
+                              // 3. And use it here as well
+                              const response = await fetch(`${API_BASE}/api/paypal/capture-order`, {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify({ orderID: data.orderID }),
@@ -649,20 +645,15 @@ export default function BookingPage() {
                               
                               const details = await response.json();
 
-                              // Verify the capture was successful
                               if (details.status === "COMPLETED") {
-                                // Extract the actual transaction ID from PayPal's response
                                 const transactionId = details.purchase_units[0].payments.captures[0].id;
-                                
-                                // Pass the verified transaction ID to your booking submission
                                 await handleBookingSubmission(transactionId); 
                               } else {
                                 throw new Error("Transaction was not completed.");
                               }
-                              
                             } catch (error) {
                               console.error("PayPal Capture Error:", error);
-                              alert("Payment failed to capture or was declined. Please try again.");
+                              alert("Payment failed to capture. Please try again.");
                             }
                           }}
                         />
