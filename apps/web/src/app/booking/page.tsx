@@ -13,7 +13,7 @@ const API_BASE_URL = process.env.NODE_ENV === "production"
 
 const OPENCAGE_API_KEY = process.env.NEXT_PUBLIC_OPENCAGE_API_KEY;
 const HOME_BASE = { lat: 44.3894, lng: -79.6903 }; 
-const MAX_RADIUS_KM = 100;
+const MAX_RADIUS_KM = 75;
 
 const MapView = dynamic(() => import("./BookingMap"), { 
   ssr: false,
@@ -88,6 +88,8 @@ export default function BookingPage() {
     "Evening (4PM - 8PM)",
   ];
   const hasPropertyNumber = /^\d+/.test(formData.address.trim());
+  const phoneRegex = /^(\+\d{1,2}\s?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$/;
+  const isPhoneValid = phoneRegex.test(formData.phone.trim());
 
   const services = ["Grass Cutting", "Leaf & Wood Removal", "Pool Cleaning", "Snow Shovelling", "Residential Cleaning", "Warehouse Cleaning"];  
 
@@ -311,7 +313,7 @@ export default function BookingPage() {
     formData.name.trim() !== "" && 
     isAddressValid && 
     hasPropertyNumber &&
-    formData.phone.trim().length >= 10 &&
+    isPhoneValid &&
     formData.email.includes("@");
 
   const getSlotFullness = (day: Date, time: string) => {
@@ -573,10 +575,17 @@ export default function BookingPage() {
                       required
                       type="tel"
                       placeholder="(555) 555-5555"
-                      className="w-full border border-zinc-300 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-black"
+                      className={`w-full border rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-black ${
+                        formData.phone && !isPhoneValid ? 'border-red-500 bg-red-50' : 'border-zinc-300'
+                      }`}
                       value={formData.phone}
                       onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                     />
+                    {formData.phone && !isPhoneValid && (
+                      <p className="text-xs text-red-500 mt-1.5 font-medium">
+                        Please enter a valid 10-digit phone number.
+                      </p>
+                    )}
                   </div>
 
                   <div>
