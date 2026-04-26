@@ -14,6 +14,9 @@ Admin can add workers and schedule workers using Postman at API endpoints.
 * https://vectorpropertymaintenance.onrender.com/api/admin/create-worker
 * https://vectorpropertymaintenance.onrender.com/api/admin/assign-schedule
 
+
+![Vector Property Maintenance Field worker Example](./assets/workerApp.jpg)
+
 ## Getting Started
 
 https://vector-property-maintenance.web.app
