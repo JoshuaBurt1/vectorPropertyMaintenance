@@ -8,10 +8,6 @@ Monorepo architechture. Standard front-end to server build, with mobile Android 
 * Mobile application (consumer) is a WebView of the front-end.
 * Mobile application (worker) is react-native + WebView.
 
-Admin can add workers and schedule workers using Postman at API endpoints.
-* https://vectorpropertymaintenance.onrender.com/api/admin/create-worker
-* https://vectorpropertymaintenance.onrender.com/api/admin/assign-schedule
-
 ## Worker's Mobile Application
 
 <div align="center">

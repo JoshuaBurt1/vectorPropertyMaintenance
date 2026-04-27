@@ -1,16 +1,18 @@
 // apps/m_w/DashboardScreen.tsx
 
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Dimensions, Alert } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { format } from 'date-fns';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import * as Location from 'expo-location';
 
 interface Job {
   address: string;
   service: string;
   email: string;
+  phone?: string;
   status?: string;
   period?: string;
   location?: [number, number];
@@ -23,13 +25,60 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
   const [isReady, setIsReady] = useState(false);
   const webViewRef = useRef<WebView>(null); 
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  
+  // Double-click state tracking
+  const [lastPress, setLastPress] = useState<number>(0);
+  const [expandedPhoneIndex, setExpandedPhoneIndex] = useState<number | null>(null);
 
-  // 1. SAFE INITIALIZATION
+  // 1. SAFE INITIALIZATION & PERMISSIONS
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsReady(true); 
-    }, 1000); 
-    return () => clearTimeout(timer);
+    let locationSubscription: Location.LocationSubscription | null = null;
+
+    const init = async () => {
+      try {
+        // Request runtime permission
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        
+        if (status === 'granted') {
+          // Native GPS listener (updates every 5 meters)
+          locationSubscription = await Location.watchPositionAsync(
+            {
+              accuracy: Location.Accuracy.High,
+              distanceInterval: 5, 
+            },
+            (location) => {
+              const { latitude, longitude } = location.coords;
+              
+              // Push coordinates to the WebView
+              const jsCode = `
+                if (window.updateUserLocation) {
+                  window.updateUserLocation(${latitude}, ${longitude});
+                }
+                true;
+              `;
+              webViewRef.current?.injectJavaScript(jsCode);
+            }
+          );
+        } else {
+          console.warn("Location permission denied");
+        }
+      } catch (error) {
+        console.warn("Location tracking error:", error);
+      }
+      
+      setTimeout(() => {
+        setIsReady(true); 
+      }, 1000); 
+    };
+    
+    init();
+
+    // Clean up the listener when the component unmounts
+    return () => {
+      if (locationSubscription) {
+        locationSubscription.remove();
+      }
+    };
   }, []);
 
   // 2. DATA NORMALIZATION
@@ -141,20 +190,13 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
                 iconAnchor: [7, 7]
               });
 
-              // Ask Leaflet to track location continuously
-              map.locate({ watch: true, enableHighAccuracy: true });
-
-              map.on('locationfound', function(e) {
+              window.updateUserLocation = function(lat, lng) {
                 if (!userMarker) {
-                  userMarker = L.marker(e.latlng, { icon: userIcon, zIndexOffset: 9999 }).addTo(map);
+                  userMarker = L.marker([lat, lng], { icon: userIcon, zIndexOffset: 9999 }).addTo(map);
                 } else {
-                  userMarker.setLatLng(e.latlng); // Update position as user moves
+                  userMarker.setLatLng([lat, lng]); // Update position as user moves
                 }
-              });
-
-              map.on('locationerror', function(e) {
-                console.log("GPS mapping error: " + e.message);
-              });
+              };
             </script>
           </body>
         </html>
@@ -163,14 +205,25 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
 
   // 3. EVENT HANDLERS
   const handleJobPress = (job: any, index: number) => {
-    setSelectedIndex(index);
-    const flyToCode = `
-      map.setView([${job.lat}, ${job.lng}], 16, {
-        animate: true,
-        duration: 1.0
-      });
-    `;
-    webViewRef.current?.injectJavaScript(flyToCode);
+    const now = Date.now();
+    const DOUBLE_PRESS_DELAY = 300;
+
+    // Detect double click
+    if (lastPress && (now - lastPress) < DOUBLE_PRESS_DELAY && selectedIndex === index) {
+      setExpandedPhoneIndex(expandedPhoneIndex === index ? null : index);
+    } else {
+      // Standard single click behavior
+      setSelectedIndex(index);
+      const flyToCode = `
+        map.setView([${job.lat}, ${job.lng}], 16, {
+          animate: true,
+          duration: 1.0
+        });
+      `;
+      webViewRef.current?.injectJavaScript(flyToCode);
+    }
+    
+    setLastPress(now);
   };
 
   const handleCompleteJob = async (originalIndex: number) => {
@@ -234,6 +287,7 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
             contentContainerStyle={styles.listContent}
             renderItem={({ item, index }) => (
               <TouchableOpacity
+                activeOpacity={0.7}
                 style={[
                   styles.jobItem,
                   selectedIndex === index && styles.selectedItem
@@ -252,6 +306,11 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
                 <View style={styles.jobInfo}>
                   <Text style={styles.addressText}>{item.address}</Text>
                   <Text style={styles.serviceText}>{item.service} • {item.period ? item.period.charAt(0).toUpperCase() + item.period.slice(1) : 'Anytime'}</Text>
+                  
+                  {/* NEW: Render Phone Number if Expanded */}
+                  {expandedPhoneIndex === index && (
+                    <Text style={styles.phoneText}>📞 {item.phone || 'No phone provided'}</Text>
+                  )}
                 </View>
                 
                 <View style={styles.actionContainer}>
@@ -353,6 +412,7 @@ const styles = StyleSheet.create({
   jobInfo: { flex: 1 },
   addressText: { fontSize: 16, fontWeight: 'bold', color: '#333' },
   serviceText: { color: '#7f8c8d', marginTop: 4, fontSize: 13 },
+  phoneText: { color: '#2980b9', marginTop: 6, fontSize: 14, fontWeight: '600' },
   
   actionContainer: {
     alignItems: 'flex-end',
