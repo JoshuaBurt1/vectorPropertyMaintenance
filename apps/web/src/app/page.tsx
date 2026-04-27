@@ -1,5 +1,7 @@
 // web/src/page.tsx
+
 import Link from "next/link";
+import Image from "next/image"; // 1. Import Image component
 import Typewriter from "@/components/Typewriter";
 
 export default function Home() {
@@ -7,7 +9,20 @@ export default function Home() {
     <div className="min-h-screen bg-white text-zinc-900 font-sans">
       {/* Hero Section */}
       <nav className="flex items-center justify-between px-8 py-6 border-b border-zinc-100">
-        <h1 className="text-xl font-bold tracking-tighter uppercase">Vector Property Maintenance</h1>
+        {/* 3. Wrap Logo and Title in a flex container */}
+        <div className="flex items-center gap-3">
+          <Image 
+            src="/assets/icon.png"
+            alt="Vector Property Maintenance Logo" 
+            width={40} 
+            height={40} 
+            className="rounded-sm"
+          />
+          <h1 className="text-xl font-bold tracking-tighter uppercase">
+            Vector Property Maintenance
+          </h1>
+        </div>
+        
         <Link 
           href="/booking"
           className="bg-black text-white px-5 py-2 rounded-full text-sm font-medium hover:bg-zinc-800 transition-colors"
@@ -17,11 +32,11 @@ export default function Home() {
       </nav>
 
       <main className="max-w-4xl mx-auto px-8 py-20 text-center sm:text-left">
+        {/* Optional: Add a larger version of the icon here if desired */}
         <div className="inline-block px-3 py-1 mb-6 text-xs font-semibold tracking-widest uppercase bg-zinc-100 rounded-full">
           Professional Property Maintenance and Custodial Services
         </div>
         
-        {/* Updated H2 with Typewriter */}
         <h2 className="text-5xl sm:text-7xl font-bold tracking-tight mb-8">
           Reliable cleaning for your{" "}
           <span className="text-black inline-block">

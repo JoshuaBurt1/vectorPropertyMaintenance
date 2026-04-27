@@ -1,4 +1,4 @@
-// web/src/layout.tsx
+// web/src/app/layout.tsx
 
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
@@ -14,9 +14,15 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Update the metadata object here
 export const metadata: Metadata = {
   title: "Vector Property Maintenance | Professional Cleaning",
   description: "Reliable property care for residential and commercial spaces.",
+  icons: {
+    // This points to web/public/assets/icon.png
+    icon: "/assets/icon.png", 
+    apple: "/assets/icon.png", 
+  },
 };
 
 export default function RootLayout({
