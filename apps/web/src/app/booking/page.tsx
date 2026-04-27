@@ -623,7 +623,6 @@ export default function BookingPage() {
                           style={{ layout: "vertical", shape: "rect" }}
                           disabled={isSubmitting}
                           createOrder={async () => {
-                            // 2. Just use the global API_BASE here
                             const response = await fetch(`${API_BASE}/api/paypal/create-order`, {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
@@ -631,12 +630,21 @@ export default function BookingPage() {
                             });
                             
                             const orderData = await response.json();
-                            if (orderData.id) return orderData.id;
-                            throw new Error("Failed to create PayPal order");
+                            
+                            // Check for HTTP errors sent by our backend
+                            if (!response.ok) {
+                              console.error("Backend Error Detail:", orderData);
+                              throw new Error(orderData.error || "Failed to create PayPal order");
+                            }
+
+                            if (orderData.id) {
+                              return orderData.id;
+                            }
+                            
+                            throw new Error("Failed to create PayPal order: No ID returned");
                           }}
                           onApprove={async (data) => {
                             try {
-                              // 3. And use it here as well
                               const response = await fetch(`${API_BASE}/api/paypal/capture-order`, {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
@@ -645,12 +653,17 @@ export default function BookingPage() {
                               
                               const details = await response.json();
 
+                              if (!response.ok) {
+                                throw new Error(details.error || "Transaction failed to capture on server.");
+                              }
+
                               if (details.status === "COMPLETED") {
                                 const transactionId = details.purchase_units[0].payments.captures[0].id;
                                 await handleBookingSubmission(transactionId); 
                               } else {
-                                throw new Error("Transaction was not completed.");
+                                throw new Error(`Transaction was not completed. Status: ${details.status}`);
                               }
+                              
                             } catch (error) {
                               console.error("PayPal Capture Error:", error);
                               alert("Payment failed to capture. Please try again.");
