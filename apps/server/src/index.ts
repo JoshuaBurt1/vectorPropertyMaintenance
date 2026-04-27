@@ -608,10 +608,10 @@ cron.schedule("*/15 * * * *", async () => {
 });
 
 
-// 2. END OF DAY MAINTENANCE (Runs at 11:38 PM)
-cron.schedule("15 21 * * *", async () => {
-  console.log("🚀 [EOD-MAINTENANCE] Starting cleanup tasks...");
-  
+// 2. END OF DAY MAINTENANCE (Runs at 10:10 PM)
+cron.schedule("10 22 * * *", async () => {
+  console.log("🚀 [EOD-MAINTENANCE] Starting cleanup and archival tasks...");
+
   const todayStr = new Date().toLocaleDateString('en-CA');
   console.log(`[DEBUG] Reference Date -> Today: ${todayStr}`);
 
@@ -619,39 +619,76 @@ cron.schedule("15 21 * * *", async () => {
     const batch = db.batch();
     let writeCount = 0;
 
-    // PART 1: DELETE PAST RAW BOOKINGS
-    console.log("[CLEANUP] Checking 'schedule' for past documents...");
+    // PART 1: DELETE RAW BOOKINGS (Today and Past)
     const scheduleSnapshot = await db.collection("schedule").get();
-
     scheduleSnapshot.docs.forEach((doc) => {
       const docDate = doc.id.split('_')[0]; 
-      
-      if (docDate < todayStr) {
-        console.log(`[DELETE] Removing past schedule: ${doc.id}`);
+      if (docDate <= todayStr) {
         batch.delete(doc.ref);
         writeCount++;
       }
     });
 
-    // PART 2: ARCHIVE WORKER ROUTES
-    console.log("[ARCHIVE] Checking 'admin_workersSchedule' for past assignments...");
+    // PART 2: PROCESS & ARCHIVE WORKER ROUTES (Today and Past)
+    console.log("[ARCHIVE] Processing 'admin_workersSchedule'...");
     const workerScheduleSnapshot = await db.collection("admin_workersSchedule").get();
 
-    workerScheduleSnapshot.docs.forEach((doc) => {
-      if (doc.id < todayStr) {
-        console.log(`[MOVE] Archiving past route: ${doc.id}`);
-        const { coordinate_route, ...archiveData } = doc.data();
-        const archiveRef = db.collection("admin_complete").doc(doc.id);
+    for (const doc of workerScheduleSnapshot.docs) {
+      if (doc.id <= todayStr) {
+        const data = doc.data();
+        const routes: any[] = data.assignedRoute || [];
         
-        batch.set(archiveRef, archiveData);
+        // 1. Separate parent metadata from the coordinate arrays
+        const { coordinate_route: _, assignedRoute: __, ...parentMeta } = data;
+
+        // 2. Helper to filter routes by status and strip child-level coordinates
+        const getArchivedSubRoute = (status: string) => {
+          const filtered = routes
+            .filter((r: any) => r.status === status)
+            .map((r: any) => {
+              const { coordinate_route, ...routeData } = r;
+              return {
+                ...routeData,
+                // Ensure worker and update info persist in individual items
+                worker: r.worker || data.worker,
+                updatedAt: r.updatedAt || data.updatedAt
+              };
+            });
+          return filtered.length > 0 ? filtered : null;
+        };
+
+        const completed = getArchivedSubRoute("completed");
+        const pending = getArchivedSubRoute("pending");
+
+        // 3. Archive Completed jobs to 'admin_complete'
+        if (completed) {
+          const completeRef = db.collection("admin_complete").doc(doc.id);
+          batch.set(completeRef, { 
+            ...parentMeta,
+            assignedRoute: completed, // Replaces 'entries' with the original field name
+            archivedAt: new Date().toISOString() 
+          }, { merge: true });
+        }
+
+        // 4. Archive Pending jobs to 'admin_incomplete'
+        if (pending) {
+          const incompleteRef = db.collection("admin_incomplete").doc(doc.id);
+          batch.set(incompleteRef, { 
+            ...parentMeta,
+            assignedRoute: pending, // Replaces 'entries' with the original field name
+            archivedAt: new Date().toISOString() 
+          }, { merge: true });
+        }
+
+        console.log(`[MOVE] Processed and removing worker schedule: ${doc.id}`);
         batch.delete(doc.ref);
         writeCount++;
       }
-    });
+    }
 
     if (writeCount > 0) {
       await batch.commit();
-      console.log(`[MAINTENANCE] Cleaned/Archived ${writeCount} total documents.`);
+      console.log(`[MAINTENANCE] Cleaned/Archived ${writeCount} total operations.`);
     }
 
     console.log("✅ [EOD-MAINTENANCE] Finished.");

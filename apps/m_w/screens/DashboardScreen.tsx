@@ -89,6 +89,30 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
               body { margin: 0; padding: 0; }
               #map { height: 100vh; width: 100vw; background: #f8f9fa; }
               .leaflet-control-attribution { display: none; }
+              
+              /* --- NEW: Pulsing White Dot CSS --- */
+              .user-gps-icon { background: transparent; border: none; }
+              .pulsing-dot {
+                width: 14px;
+                height: 14px;
+                background-color: white;
+                border-radius: 50%;
+                box-shadow: 0 0 6px rgba(0,0,0,0.6);
+                position: relative;
+              }
+              .pulsing-dot::after {
+                content: '';
+                position: absolute;
+                top: 0; left: 0; right: 0; bottom: 0;
+                background-color: rgba(255, 255, 255, 0.8);
+                border-radius: 50%;
+                animation: pulse 1.5s infinite ease-out;
+                z-index: -1;
+              }
+              @keyframes pulse {
+                0% { transform: scale(1); opacity: 1; }
+                100% { transform: scale(3.5); opacity: 0; }
+              }
             </style>
           </head>
           <body>
@@ -102,12 +126,35 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
                 var polyline = L.polyline(routePolyline, {color: '#2980b9', weight: 5, opacity: 0.8}).addTo(map);
                 map.fitBounds(polyline.getBounds(), { padding: [40, 40] });
               } else if (${formattedRoutes.length} > 0) {
-                // Fallback to bounds of points if no route polyline exists
                 var bounds = L.latLngBounds(${JSON.stringify(formattedRoutes.map((j: any) => [j.lat, j.lng]))});
                 map.fitBounds(bounds, { padding: [40, 40] });
               }
               
               ${markersJS}
+
+              /* --- NEW: GPS Tracking Logic --- */
+              var userMarker = null;
+              var userIcon = L.divIcon({
+                className: 'user-gps-icon',
+                html: '<div class="pulsing-dot"></div>',
+                iconSize: [14, 14],
+                iconAnchor: [7, 7]
+              });
+
+              // Ask Leaflet to track location continuously
+              map.locate({ watch: true, enableHighAccuracy: true });
+
+              map.on('locationfound', function(e) {
+                if (!userMarker) {
+                  userMarker = L.marker(e.latlng, { icon: userIcon, zIndexOffset: 9999 }).addTo(map);
+                } else {
+                  userMarker.setLatLng(e.latlng); // Update position as user moves
+                }
+              });
+
+              map.on('locationerror', function(e) {
+                console.log("GPS mapping error: " + e.message);
+              });
             </script>
           </body>
         </html>
@@ -177,6 +224,7 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
               source={{ html: leafletHTML }}
               style={styles.map}
               scrollEnabled={false}
+              geolocationEnabled={true}
             />
           </View>
 
