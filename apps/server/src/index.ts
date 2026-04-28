@@ -597,20 +597,32 @@ cron.schedule("*/15 * * * *", async () => {
       console.log(`[SYNC] Updating route for ${dateStr}. Diff detected, pulling fresh OSRM data...`);
       const routeData = await generateDailyRoute(dateStr);
 
-      // --- NEW STATUS PRESERVATION LOGIC ---
+      // 1. Build a robust Status Map
       const statusMap: Record<string, string> = {};
       existingBookings.forEach((b: any) => {
-        if (b.createdAt && b.status) {
-          statusMap[b.createdAt] = b.status;
+        const tId = b.transactionId;
+        const cAt = b.createdAt?.toString(); 
+        
+        if (b.status) {
+          if (tId) statusMap[tId] = b.status;
+          if (cAt) statusMap[cAt] = b.status;
         }
       });
 
-      // Patch the new route with existing statuses
-      const preservedRoute = routeData.route.map((newBooking: any) => ({
-        ...newBooking,
-        status: statusMap[newBooking.createdAt] || "pending"
-      }));
+      // 2. Patch the new route with the preserved status
+      const preservedRoute = routeData.route.map((newBooking: any) => {
+        const tId = newBooking.transactionId;
+        const cAt = newBooking.createdAt?.toString();
 
+        const existingStatus = (tId && statusMap[tId]) || (cAt && statusMap[cAt]);
+
+        return {
+          ...newBooking,
+          status: existingStatus || "pending"
+        };
+      });
+
+      // 3. Save the patched route
       await scheduleRef.set({
         worker: workerToAssign,
         date: dateStr,
