@@ -60,6 +60,8 @@ import { useMap, useMapEvents } from "react-leaflet";
 
 export default function BookingPage() {
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() => getStartOfWeek(new Date()));
+  const [currentTime, setCurrentTime] = useState("");
+  const [userTimezone, setUserTimezone] = useState("");
   const [days, setDays] = useState<Date[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<{ date: Date; time: TimeSlot } | null>(null);
@@ -140,6 +142,24 @@ export default function BookingPage() {
     }
     setDays(week);
   }, [currentWeekStart]);
+
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      
+      setCurrentTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+
+      const shortTZ = new Intl.DateTimeFormat('en-US', { 
+        timeZoneName: 'short' 
+      }).formatToParts(now).find(p => p.type === 'timeZoneName')?.value;
+      
+      setUserTimezone(shortTZ || "");
+    };
+
+    updateTime();
+    const timer = setInterval(updateTime, 60000); 
+    return () => clearInterval(timer);
+  }, []);
 
   const fetchBookings = async () => {
     setIsLoading(true);
@@ -369,7 +389,7 @@ export default function BookingPage() {
               ← Previous Week
             </button>
             <span className="font-semibold text-lg">
-              Week of {currentWeekStart.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+              Week of {currentWeekStart.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}, {currentTime} ({userTimezone})
             </span>
             <button onClick={() => shiftWeek(1)} className="p-2 hover:bg-zinc-100 rounded-lg">
               Next Week →
@@ -387,7 +407,6 @@ export default function BookingPage() {
                 {timeSlots.map((time) => {
                   if (isLoading) return <SkeletonSlot key={time} />;
 
-                  // Normalize both to date strings to avoid time/timezone math issues
                   const dayStr = day.toDateString();
                   const todayStr = new Date().toDateString();
 
@@ -396,8 +415,6 @@ export default function BookingPage() {
                   let isPastSlot = false;
 
                   if (dayStr === todayStr) {
-                    // Flag slots as past based on the current hour (EDT/Local)
-                    // Morning starts at 8AM (8), Afternoon at 12PM (12), Evening at 4PM (16)
                     if (time.startsWith("Morning") && currentHour >= 8) isPastSlot = true;
                     if (time.startsWith("Afternoon") && currentHour >= 12) isPastSlot = true;
                     if (time.startsWith("Evening") && currentHour >= 16) isPastSlot = true;

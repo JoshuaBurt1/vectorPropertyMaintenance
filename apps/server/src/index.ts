@@ -269,11 +269,17 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
     }
 
     const now = new Date();
-    const currentHour = now.getHours();
-    const isToday = new Date(date).toDateString() === now.toDateString();
+    const estDateString = now.toLocaleString("en-US", { timeZone: "EST" });
+    const estDate = new Date(estDateString);
+    const currentHour = estDate.getHours();
+
+    const todayEST = estDate.toISOString().split('T')[0];
+    const bookingDateEST = new Date(date).toISOString().split('T')[0];
+    const isToday = bookingDateEST === todayEST;
 
     if (isToday) {
       let isExpired = false;
+      // Now 1:30 PM EST will correctly evaluate currentHour as 13
       if (timeSlot.startsWith("Morning") && currentHour >= 8) isExpired = true;
       if (timeSlot.startsWith("Afternoon") && currentHour >= 12) isExpired = true;
       if (timeSlot.startsWith("Evening") && currentHour >= 16) isExpired = true;

@@ -9,14 +9,14 @@ export default function Home() {
     <div className="min-h-screen bg-white text-zinc-900 font-sans">
       {/* Hero Section */}
       <nav className="flex items-center justify-between px-8 py-6 border-b border-zinc-100">
-        {/* 3. Wrap Logo and Title in a flex container */}
         <div className="flex items-center gap-3">
           <Image 
             src="/assets/icon.png"
             alt="Vector Property Maintenance Logo" 
             width={40} 
             height={40} 
-            className="rounded-sm"
+            className="rounded-sm w-10 h-10 object-contain" 
+            priority
           />
           <h1 className="text-xl font-bold tracking-tighter uppercase">
             Vector Property Maintenance
