@@ -597,10 +597,24 @@ cron.schedule("*/15 * * * *", async () => {
       console.log(`[SYNC] Updating route for ${dateStr}. Diff detected, pulling fresh OSRM data...`);
       const routeData = await generateDailyRoute(dateStr);
 
+      // --- NEW STATUS PRESERVATION LOGIC ---
+      const statusMap: Record<string, string> = {};
+      existingBookings.forEach((b: any) => {
+        if (b.createdAt && b.status) {
+          statusMap[b.createdAt] = b.status;
+        }
+      });
+
+      // Patch the new route with existing statuses
+      const preservedRoute = routeData.route.map((newBooking: any) => ({
+        ...newBooking,
+        status: statusMap[newBooking.createdAt] || "pending"
+      }));
+
       await scheduleRef.set({
         worker: workerToAssign,
         date: dateStr,
-        assignedRoute: routeData.route,
+        assignedRoute: preservedRoute,
         coordinate_route: routeData.coordinate_route,
         distance: routeData.distance,
         straightLineTotal: routeData.straightLineTotal,
