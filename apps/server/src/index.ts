@@ -216,13 +216,15 @@ app.use(cors({
 }));
 
 const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
+  host: "74.125.141.108", 
   port: 465,
   secure: true,
-  family: 4, 
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
+  },
+  tls: {
+    servername: "smtp.gmail.com"
   }
 } as SMTPTransport.Options);
 
