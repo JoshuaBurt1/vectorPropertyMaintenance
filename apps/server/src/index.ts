@@ -7,9 +7,6 @@ import * as admin from "firebase-admin";
 import path from "path";
 import nodemailer from "nodemailer";
 
-// GLOBAL HELPERS
-const getTodayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
-
 // SECURE PAYPAL INTEGRATION
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID;
 const PAYPAL_APP_SECRET = process.env.PAYPAL_APP_SECRET;
@@ -185,7 +182,7 @@ const db = admin.firestore();
 console.log("✅ VectorPM Firebase Admin connected");
 
 const app = express();
-const PORT = Number(process.env.PORT) || 8080;
+const PORT = process.env.PORT || 8080;
 
 app.use(express.json()); 
 
@@ -199,7 +196,7 @@ const allowedOrigins = [
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-   if (allowedOrigins.indexOf(origin) !== -1) {
+    if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
       callback(new Error("Not allowed by CORS"));
@@ -219,7 +216,7 @@ const transporter = nodemailer.createTransport({
 app.get("/api/schedule", async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
-    const todayStr = getTodayStr();
+    const todayStr = new Date().toLocaleDateString('en-CA');
     const snapshot = await db.collection("schedule")
       .where("dateString", ">=", todayStr)
       .get();
@@ -271,42 +268,28 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // --- START REPLACEMENT ---
     const now = new Date();
-    
-    // Get Toronto-specific Date and Hour
-    const torontoDateStr = now.toLocaleDateString("en-CA", { timeZone: "America/Toronto" }); // "YYYY-MM-DD"
-    const torontoHour = parseInt(now.toLocaleTimeString("en-US", { 
-      timeZone: "America/Toronto", 
-      hour12: false, 
-      hour: "2-digit" 
-    }));
-
-    // FIX: Do NOT use new Date(date). The frontend already sends the exact Toronto string (YYYY-MM-DD).
-    const bookingDateOnly = date.substring(0, 10); 
-    const isToday = bookingDateOnly === torontoDateStr;
+    const currentHour = now.getHours();
+    const isToday = new Date(date).toDateString() === now.toDateString();
 
     if (isToday) {
       let isExpired = false;
-
-      // Logic: If it's 9:01 AM, the 8:00 AM Morning slot is expired.
-      if (timeSlot.startsWith("Morning") && torontoHour >= 8) isExpired = true;
-      if (timeSlot.startsWith("Afternoon") && torontoHour >= 12) isExpired = true;
-      if (timeSlot.startsWith("Evening") && torontoHour >= 16) isExpired = true;
+      if (timeSlot.startsWith("Morning") && currentHour >= 8) isExpired = true;
+      if (timeSlot.startsWith("Afternoon") && currentHour >= 12) isExpired = true;
+      if (timeSlot.startsWith("Evening") && currentHour >= 16) isExpired = true;
 
       if (isExpired) {
         res.status(400).json({ 
-          error: "This time slot is no longer available. Please select a later time." 
+          error: "This time slot has already started and is no longer available for booking." 
         });
         return;
       }
     }
 
-    // Use the perfectly formatted string directly for the database ID
-    const dateString = bookingDateOnly;
+    const dateObj = new Date(date);
+    const dateString = dateObj.toISOString().split('T')[0]; 
     const slotSlug = timeSlot.split(' ')[0]; 
     const documentId = `${dateString}_${slotSlug}`; 
-    // --- END REPLACEMENT ---
 
     await db.runTransaction(async (t) => {
       const slotRef = db.collection("schedule").doc(documentId);
@@ -559,7 +542,7 @@ cron.schedule("*/15 * * * *", async () => {
   console.log("⏳ [15-MIN SYNC] Checking for unoptimized routes across all active days...");
   
   try {
-    const todayStr = getTodayStr();
+    const todayStr = new Date().toLocaleDateString('en-CA');
     const scheduleSnapshot = await db.collection("schedule").where("dateString", ">=", todayStr).get();
     
     const uniqueDates = new Set<string>();
@@ -596,11 +579,11 @@ cron.schedule("*/15 * * * *", async () => {
 
       if (!workerToAssign) continue;
 
-      // Extract unique identifiers to test if the array has actually changed
+      // Extract unique identifiers (like createdAt) to test if the array has actually changed
       const rawIds = rawBookings.map(b => b.createdAt).sort().join("|");
       const existingIds = existingBookings.map(b => b.createdAt).sort().join("|");
 
-      // Skip recalculation if the bookings haven't changed
+      // API Savings Check: Skip recalculation if the bookings haven't changed!
       if (scheduleDoc.exists && rawIds === existingIds) {
         continue;
       }
@@ -608,36 +591,10 @@ cron.schedule("*/15 * * * *", async () => {
       console.log(`[SYNC] Updating route for ${dateStr}. Diff detected, pulling fresh OSRM data...`);
       const routeData = await generateDailyRoute(dateStr);
 
-      // 1. Build a robust Status Map
-      const statusMap: Record<string, string> = {};
-      existingBookings.forEach((b: any) => {
-        const tId = b.transactionId;
-        const cAt = b.createdAt?.toString(); 
-        
-        if (b.status) {
-          if (tId) statusMap[tId] = b.status;
-          if (cAt) statusMap[cAt] = b.status;
-        }
-      });
-
-      // 2. Patch the new route with the preserved status
-      const preservedRoute = routeData.route.map((newBooking: any) => {
-        const tId = newBooking.transactionId;
-        const cAt = newBooking.createdAt?.toString();
-
-        const existingStatus = (tId && statusMap[tId]) || (cAt && statusMap[cAt]);
-
-        return {
-          ...newBooking,
-          status: existingStatus || "pending"
-        };
-      });
-
-      // 3. Save the patched route
       await scheduleRef.set({
         worker: workerToAssign,
         date: dateStr,
-        assignedRoute: preservedRoute,
+        assignedRoute: routeData.route,
         coordinate_route: routeData.coordinate_route,
         distance: routeData.distance,
         straightLineTotal: routeData.straightLineTotal,
@@ -648,8 +605,6 @@ cron.schedule("*/15 * * * *", async () => {
   } catch (error) {
     console.error("❌ [15-MIN SYNC Error]:", error);
   }
-}, { 
-  timezone: "America/Toronto" 
 });
 
 
@@ -657,7 +612,7 @@ cron.schedule("*/15 * * * *", async () => {
 cron.schedule("10 22 * * *", async () => {
   console.log("🚀 [EOD-MAINTENANCE] Starting cleanup and archival tasks...");
 
-  const todayStr = getTodayStr();
+  const todayStr = new Date().toLocaleDateString('en-CA');
   console.log(`[DEBUG] Reference Date -> Today: ${todayStr}`);
 
   try {
@@ -740,8 +695,6 @@ cron.schedule("10 22 * * *", async () => {
   } catch (error) {
     console.error("❌ [EOD-MAINTENANCE Error]:", error);
   }
-}, { 
-  timezone: "America/Toronto" 
 });
 
 app.get("/", (req, res) => {
@@ -757,7 +710,7 @@ const SERVER_URL = isProd
   ? "https://vectorpropertymaintenance.onrender.com" 
   : `http://localhost:${PORT}`;
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, () => {
   console.log(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
   console.log(`📡 Health check: ${SERVER_URL}/health`);
 });
