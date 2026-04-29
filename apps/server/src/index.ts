@@ -218,6 +218,15 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+transporter.verify((error, success) => {
+  if (error) {
+    console.error("❌ [NODEMAILER_ERROR] Connection failed:", error.message);
+    console.error("DEBUG INFO: Check your App Password and Port 465 status.");
+  } else {
+    console.log("✅ [NODEMAILER_SUCCESS] Server is ready to send emails");
+  }
+});
+
 app.get("/api/schedule", async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
