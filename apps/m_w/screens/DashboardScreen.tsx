@@ -1,5 +1,7 @@
 // apps/m_w/DashboardScreen.tsx
 
+// apps/m_w/DashboardScreen.tsx
+
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Dimensions, Alert } from 'react-native';
 import { WebView } from 'react-native-webview';
@@ -25,6 +27,7 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
   const [isReady, setIsReady] = useState(false);
   const webViewRef = useRef<WebView>(null); 
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [isZoomedIn, setIsZoomedIn] = useState(false);
   
   // Double-click state tracking
   const [lastPress, setLastPress] = useState<number>(0);
@@ -149,6 +152,7 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
               
               var markers = []; // Store markers to update them later
               var routesData = ${JSON.stringify(formattedRoutes)};
+              var routePolyline = ${routePolylineString};
 
               // 2. Helper to generate the icon HTML
               function createIconHtml(color, size, isSelected, label) {
@@ -202,15 +206,23 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
                 markers.push(marker);
               });
 
-              // 5. Polyline and Bounds
-              var routePolyline = ${routePolylineString};
+              // 5. Polyline and Fit Bounds Logic
+              window.fitMapBounds = function() {
+                if (routePolyline && routePolyline.length > 0) {
+                  var polylineForBounds = L.polyline(routePolyline);
+                  map.fitBounds(polylineForBounds.getBounds(), { padding: [40, 40], animate: true, duration: 0.5 });
+                } else if (routesData && routesData.length > 0) {
+                  var bounds = L.latLngBounds(routesData.map(function(j) { return [j.lat, j.lng]; }));
+                  map.fitBounds(bounds, { padding: [40, 40], animate: true, duration: 0.5 });
+                }
+              };
+
               if (routePolyline.length > 0) {
-                var polyline = L.polyline(routePolyline, {color: '#2980b9', weight: 5, opacity: 0.8}).addTo(map);
-                map.fitBounds(polyline.getBounds(), { padding: [40, 40] });
-              } else if (routesData.length > 0) {
-                var bounds = L.latLngBounds(routesData.map(function(j) { return [j.lat, j.lng]; }));
-                map.fitBounds(bounds, { padding: [40, 40] });
+                L.polyline(routePolyline, {color: '#2980b9', weight: 5, opacity: 0.8}).addTo(map);
               }
+              
+              // Call initially to center the map
+              window.fitMapBounds();
 
               // 6. GPS Tracking
               var userMarker = null;
@@ -240,22 +252,41 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
     const DOUBLE_PRESS_DELAY = 300;
 
     if (lastPress && (now - lastPress) < DOUBLE_PRESS_DELAY && selectedIndex === index) {
+      // DOUBLE CLICK DETECTED
       setExpandedPhoneIndex(expandedPhoneIndex === index ? null : index);
-    } else {
-      setSelectedIndex(index);
+      setIsZoomedIn(true);
       
-      // Updated JavaScript injection
-      const updateCode = `
-        if (window.highlightMarker) {
-          window.highlightMarker(${index});
-        }
+      const zoomCode = `
         map.setView([${job.lat}, ${job.lng}], 16, {
           animate: true,
           duration: 1.0
         });
         true;
       `;
-      webViewRef.current?.injectJavaScript(updateCode);
+      webViewRef.current?.injectJavaScript(zoomCode);
+    } else {
+      // SINGLE CLICK (OR FIRST CLICK OF A DOUBLE CLICK)
+      setSelectedIndex(index);
+      
+      let jsCode = `
+        if (window.highlightMarker) {
+          window.highlightMarker(${index});
+        }
+      `;
+
+      // If we are currently zoomed in, and the user clicked a different marker, show the entire map.
+      // (If this turns out to be the first tap of a double click, the second tap will instantly fire the zoom logic above).
+      if (selectedIndex !== index && isZoomedIn) {
+        jsCode += `
+          if (window.fitMapBounds) {
+             window.fitMapBounds();
+          }
+        `;
+        setIsZoomedIn(false);
+      }
+
+      jsCode += ` true;`;
+      webViewRef.current?.injectJavaScript(jsCode);
     }
     
     setLastPress(now);

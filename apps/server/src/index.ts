@@ -5,13 +5,10 @@ import cors from "cors";
 import cron from "node-cron";
 import * as admin from "firebase-admin";
 import path from "path";
-import { Resend } from 'resend';
+import nodemailer from "nodemailer";
 
 // GLOBAL HELPERS
 const getTodayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
-
-// RESEND EMAIL SERVICE
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 // SECURE PAYPAL INTEGRATION
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID;
@@ -211,11 +208,13 @@ app.use(cors({
   credentials: true,
 }));
 
-let emailSystemStatus = {
-  status: "READY (RESEND API)",
-  lastError: null as string | null,
-  timestamp: new Date().toISOString()
-};
+const transporter = nodemailer.createTransport({
+  service: "gmail", 
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
 
 app.get("/api/schedule", async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -272,6 +271,7 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // --- START REPLACEMENT ---
     const now = new Date();
     
     // Get Toronto-specific Date and Hour
@@ -282,12 +282,14 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
       hour: "2-digit" 
     }));
 
+    // FIX: Do NOT use new Date(date). The frontend already sends the exact Toronto string (YYYY-MM-DD).
     const bookingDateOnly = date.substring(0, 10); 
     const isToday = bookingDateOnly === torontoDateStr;
 
     if (isToday) {
       let isExpired = false;
 
+      // Logic: If it's 9:01 AM, the 8:00 AM Morning slot is expired.
       if (timeSlot.startsWith("Morning") && torontoHour >= 8) isExpired = true;
       if (timeSlot.startsWith("Afternoon") && torontoHour >= 12) isExpired = true;
       if (timeSlot.startsWith("Evening") && torontoHour >= 16) isExpired = true;
@@ -304,6 +306,7 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
     const dateString = bookingDateOnly;
     const slotSlug = timeSlot.split(' ')[0]; 
     const documentId = `${dateString}_${slotSlug}`; 
+    // --- END REPLACEMENT ---
 
     await db.runTransaction(async (t) => {
       const slotRef = db.collection("schedule").doc(documentId);
@@ -342,53 +345,49 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
     console.log(`[BOOKING] Slot updated: ${documentId}. Route optimization queued for background sync.`);
     broadcastUpdate({ type: "REFRESH_SCHEDULE", documentId });
 
+    try {
+      const formattedDate = new Date(date).toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+
+      const mailOptions = {
+        from: `"Vector Property Maintenance" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: `Booking Confirmed: ${service}`,
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; color: #333;">
+            <h2>Booking Confirmation</h2>
+            <p>Hi <b>${name}</b>,</p>
+            <p>We've received your request for <b>${service}</b>.</p>
+            <hr />
+            <p><b>Date:</b> ${formattedDate}</p>
+            <p><b>Time Window:</b> ${timeSlot}</p>
+            <p><b>Location:</b> ${address}</p>
+            <p><b>Geocoordinate:</b> ${location}</p>
+            <hr />
+            <p>Best regards,<br/>The Vector Team</p>
+          </div>
+        `,
+      };
+
+      await transporter.sendMail(mailOptions);
+      console.log(`[EMAIL] Sent to ${email}`);
+    } catch (emailError) {
+      console.error("❌ Failed to send confirmation email:", emailError);
+    }
+
     res.status(201).json({ success: true, documentId });
-
-    // 2. Handle the email in the background WITHOUT 'awaiting' the whole block
-    const sendEmailBackground = async () => {
-      try {
-        const formattedDate = new Date(date).toLocaleDateString('en-US', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric'
-        });
-
-        await resend.emails.send({
-          from: 'Vector Maintenance <onboarding@resend.dev>',
-          to: email,
-          subject: `Booking Confirmed: ${service}`,
-          html: `
-            <div style="font-family: sans-serif; max-width: 600px; color: #333;">
-              <h2>Booking Confirmation</h2>
-              <p>Hi <b>${name}</b>,</p>
-              <p>We've received your request for <b>${service}</b>.</p>
-              <hr />
-              <p><b>Date:</b> ${formattedDate}</p>
-              <p><b>Time Window:</b> ${timeSlot}</p>
-              <p><b>Location:</b> ${address}</p>
-              <hr />
-              <p>Best regards,<br/>The Vector Team</p>
-            </div>
-          `,
-        });
-        console.log(`[RESEND] Email sent successfully to ${email}`);
-      } catch (emailError: any) {
-        console.error("❌ Resend failed to send:", emailError.message);
-      }
-    };
-
-    sendEmailBackground();
-
+    
   } catch (error: any) {
     if (error.message === "SLOT_FULL") {
       res.status(409).json({ error: "This time slot is already fully booked." });
       return;
     }
     console.error("❌ Critical error during booking:", error);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "Internal server error during booking." });
-    }
+    res.status(500).json({ error: "Internal server error during booking." });
   }
 });
 
@@ -459,7 +458,6 @@ app.post("/api/admin/create-worker", async (req: Request, res: Response): Promis
 
     const temporaryPassword = `Vector${Math.floor(1000 + Math.random() * 9000)}!`;
 
-    // 1. Create the Firebase Auth User
     const userRecord = await admin.auth().createUser({
       email,
       password: temporaryPassword,
@@ -467,7 +465,6 @@ app.post("/api/admin/create-worker", async (req: Request, res: Response): Promis
       phoneNumber: phoneNumber || undefined,
     });
 
-    // 2. Store worker details in Firestore
     await db.collection("admin_workers").doc(fullName).set({
       uid: userRecord.uid,
       name: fullName,
@@ -479,46 +476,40 @@ app.post("/api/admin/create-worker", async (req: Request, res: Response): Promis
       createdAt: new Date().toISOString(),
     });
 
-    // 3. Send SUCCESS response immediately
+    try {
+      const mailOptions = {
+        from: `"Vector Admin" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: "Welcome to Vector Property Maintenance - Worker Account Created",
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; color: #333;">
+            <h2>Welcome to the Team, ${fullName}!</h2>
+            <p>Your worker account has been created. You can now log in to the Mobile App.</p>
+            <hr />
+            <p><b>Login Email:</b> ${email}</p>
+            <p><b>Temporary Password:</b> <code style="background: #eee; padding: 2px 5px;">${temporaryPassword}</code></p>
+            <hr />
+            <p><i>Please change your password immediately after your first login.</i></p>
+            <p>Best regards,<br/>Vector Management</p>
+          </div>
+        `,
+      };
+
+      await transporter.sendMail(mailOptions);
+      console.log(`[ADMIN] Invitation sent to ${email}`);
+    } catch (emailError) {
+      console.error("❌ Worker created, but invitation email failed:", emailError);
+    }
+
     res.status(201).json({ 
       success: true, 
-      message: "Worker account created and invitation queued.",
+      message: "Worker account created and invitation sent.",
       uid: userRecord.uid 
     });
 
-    // 4. Background Invitation Email
-    const sendInviteBackground = async () => {
-      try {
-        await resend.emails.send({
-          from: 'Vector Admin <onboarding@resend.dev>',
-          to: email,
-          subject: "Welcome to Vector Property Maintenance - Account Created",
-          html: `
-            <div style="font-family: sans-serif; max-width: 600px; color: #333;">
-              <h2>Welcome to the Team, ${fullName}!</h2>
-              <p>Your worker account has been created. You can now log in to the Mobile App.</p>
-              <hr />
-              <p><b>Login Email:</b> ${email}</p>
-              <p><b>Temporary Password:</b> <code style="background: #eee; padding: 2px 5px;">${temporaryPassword}</code></p>
-              <hr />
-              <p><i>Please change your password immediately after your first login.</i></p>
-              <p>Best regards,<br/>Vector Management</p>
-            </div>
-          `,
-        });
-        console.log(`[ADMIN] Invitation sent to ${email}`);
-      } catch (emailError: any) {
-        console.error("❌ Worker created, but Resend failed:", emailError.message);
-      }
-    };
-
-    sendInviteBackground();
-
   } catch (error: any) {
     console.error("❌ Error creating worker account:", error);
-    if (!res.headersSent) {
-      res.status(500).json({ error: error.message || "Failed to create worker account." });
-    }
+    res.status(500).json({ error: error.message || "Failed to create worker account." });
   }
 });
 
