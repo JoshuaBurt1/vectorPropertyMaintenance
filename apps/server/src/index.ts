@@ -185,7 +185,7 @@ const db = admin.firestore();
 console.log("✅ VectorPM Firebase Admin connected");
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = Number(process.env.PORT) || 8080;
 
 app.use(express.json()); 
 
@@ -757,7 +757,7 @@ const SERVER_URL = isProd
   ? "https://vectorpropertymaintenance.onrender.com" 
   : `http://localhost:${PORT}`;
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
   console.log(`📡 Health check: ${SERVER_URL}/health`);
 });
