@@ -81,6 +81,7 @@ export default function BookingPage() {
   const [isAddressValid, setIsAddressValid] = useState(false);
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [justBooked, setJustBooked] = useState<{ date: string; time: string } | null>(null);
 
   const timeSlots: TimeSlot[] = [
     "Morning (8AM - 12PM)",
@@ -232,8 +233,16 @@ export default function BookingPage() {
       }
 
       alert("Booking confirmed!");
+      
+      setJustBooked({
+        date: selectedBlock.date.toLocaleDateString('en-CA', { timeZone: 'America/Toronto' }),
+        time: selectedBlock.time
+      });
+
+      setTimeout(() => setJustBooked(null), 5000);
       closeModal();
       fetchBookings();
+
     } catch (error: any) {
       console.error(error);
       alert(error.message);
@@ -400,23 +409,24 @@ export default function BookingPage() {
                   const isUnavailable = isFullyBooked || isPastDay || isPastSlot;
 
                   const isPast = isPastDay || isPastSlot;
+                  const isRecentlyBooked = justBooked?.date === dayStrToronto && justBooked?.time === time;
 
                   let statusLabel = "0% Full";
                   let fullnessClass = "text-emerald-600";
 
-                  if (isPast) {
+                  if (isRecentlyBooked) {
+                    statusLabel = "Booked by You!";
+                    fullnessClass = "text-blue-700 font-bold";
+                  } else if (isPast) {
                     statusLabel = "Unavailable";
                     fullnessClass = "text-zinc-400";
                   } else if (isFullyBooked) {
-                    // If it's in the future but full
                     statusLabel = "100% Full";
                     fullnessClass = "text-blue-600 font-semibold";
                   } else if (fullnessCount === 1) {
-                    // If it's in the future and half-full
                     statusLabel = "50% Full";
                     fullnessClass = "text-teal-600";
                   } else {
-                    // Available
                     statusLabel = "0% Full";
                     fullnessClass = "text-emerald-600";
                   }
@@ -427,9 +437,11 @@ export default function BookingPage() {
                       disabled={isUnavailable}
                       onClick={() => handleBlockClick(day, time)}
                       className={`p-4 text-left text-sm border rounded-xl h-24 flex flex-col justify-between transition-all ${
-                        isUnavailable 
-                          ? "bg-zinc-200/50 border-zinc-200 text-zinc-400 cursor-default" 
-                          : "bg-white border-zinc-200 hover:border-black hover:shadow-md"
+                        isRecentlyBooked
+                          ? "bg-blue-50 border-blue-500 ring-2 ring-blue-500 shadow-md" // THE NEW BLUE HIGHLIGHT
+                          : isUnavailable 
+                            ? "bg-zinc-200/50 border-zinc-200 text-zinc-400 cursor-default" 
+                            : "bg-white border-zinc-200 hover:border-black hover:shadow-md"
                       }`}
                     >
                       <span className={`font-medium ${(isPastDay || isPastSlot) ? "line-through text-zinc-400" : "text-zinc-700"}`}>
