@@ -103,30 +103,6 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
 
     const routePolylineString = JSON.stringify(polylineCoords);
 
-    // Generate custom numbered markers
-    const markersJS = formattedRoutes.map((j: any, i: number) => {
-      let color = '#95a5a6'; // Default Gray
-      if (j.status === 'completed') color = '#2ecc71'; // Green
-      else if (j.period === 'morning') color = '#f39c12'; // Orange
-      else if (j.period === 'afternoon') color = '#3498db'; // Blue
-      else if (j.period === 'evening') color = '#9b59b6'; // Purple
-
-      const isSelected = selectedIndex === i;
-      const size = isSelected ? 32 : 24;
-      const border = isSelected ? 'border: 3px solid #333;' : 'border: 2px solid #fff;';
-      const zIndexOffset = isSelected ? 1000 : 0;
-
-      return `
-        var icon${i} = L.divIcon({
-          className: 'custom-numbered-marker',
-          html: "<div style='background-color:${color}; width:${size}px; height:${size}px; border-radius:50%; ${border} display:flex; justify-content:center; align-items:center; color:white; font-weight:bold; font-size:${isSelected ? '14px' : '12px'}; box-shadow: 0 2px 5px rgba(0,0,0,0.3);'>${j.originalIndex + 1}</div>",
-          iconSize: [${size}, ${size}],
-          iconAnchor: [${size/2}, ${size/2}]
-        });
-        L.marker([${j.lat}, ${j.lng}], { icon: icon${i}, zIndexOffset: ${zIndexOffset} }).addTo(map);
-      `;
-    }).join('');
-
     return `
       <!DOCTYPE html>
         <html>
@@ -167,21 +143,76 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
           <body>
             <div id="map"></div>
             <script>
+              // 1. Map Initialization
               var map = L.map('map', { zoomControl: false });
               L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
               
+              var markers = []; // Store markers to update them later
+              var routesData = ${JSON.stringify(formattedRoutes)};
+
+              // 2. Helper to generate the icon HTML
+              function createIconHtml(color, size, isSelected, label) {
+                var border = isSelected ? '3px solid #333' : '2px solid #fff';
+                var fontSize = isSelected ? '14px' : '12px';
+                return "<div style='background-color:" + color + "; width:" + size + "px; height:" + size + "px; border-radius:50%; border:" + border + "; display:flex; justify-content:center; align-items:center; color:white; font-weight:bold; font-size:" + fontSize + "; box-shadow: 0 2px 5px rgba(0,0,0,0.3);'>" + label + "</div>";
+              }
+
+              // 3. Highlight Function (Called via injectJavaScript)
+              window.highlightMarker = function(selectedIndex) {
+                markers.forEach(function(m, i) {
+                  var isSelected = i === selectedIndex;
+                  var size = isSelected ? 32 : 24;
+                  var color = m.options.myColor;
+                  var label = m.options.myLabels;
+
+                  var newIcon = L.divIcon({
+                    className: 'custom-numbered-marker',
+                    html: createIconHtml(color, size, isSelected, label),
+                    iconSize: [size, size],
+                    iconAnchor: [size / 2, size / 2]
+                  });
+
+                  m.setIcon(newIcon);
+                  m.setZIndexOffset(isSelected ? 1000 : 0);
+                });
+              };
+
+              // 4. Create Markers
+              routesData.forEach(function(j, i) {
+                var color = '#95a5a6';
+                if (j.status === 'completed') color = '#2ecc71';
+                else if (j.period === 'morning') color = '#f39c12';
+                else if (j.period === 'afternoon') color = '#3498db';
+                else if (j.period === 'evening') color = '#9b59b6';
+
+                var label = j.originalIndex + 1;
+                var icon = L.divIcon({
+                  className: 'custom-numbered-marker',
+                  html: createIconHtml(color, 24, false, label),
+                  iconSize: [24, 24],
+                  iconAnchor: [12, 12]
+                });
+
+                var marker = L.marker([j.lat, j.lng], { 
+                  icon: icon, 
+                  myColor: color, // Store metadata on marker
+                  myLabels: label 
+                }).addTo(map);
+                
+                markers.push(marker);
+              });
+
+              // 5. Polyline and Bounds
               var routePolyline = ${routePolylineString};
               if (routePolyline.length > 0) {
                 var polyline = L.polyline(routePolyline, {color: '#2980b9', weight: 5, opacity: 0.8}).addTo(map);
                 map.fitBounds(polyline.getBounds(), { padding: [40, 40] });
-              } else if (${formattedRoutes.length} > 0) {
-                var bounds = L.latLngBounds(${JSON.stringify(formattedRoutes.map((j: any) => [j.lat, j.lng]))});
+              } else if (routesData.length > 0) {
+                var bounds = L.latLngBounds(routesData.map(function(j) { return [j.lat, j.lng]; }));
                 map.fitBounds(bounds, { padding: [40, 40] });
               }
-              
-              ${markersJS}
 
-              /* --- NEW: GPS Tracking Logic --- */
+              // 6. GPS Tracking
               var userMarker = null;
               var userIcon = L.divIcon({
                 className: 'user-gps-icon',
@@ -194,33 +225,37 @@ export default function DashboardScreen({ worker, routes, coordinateRoute, sched
                 if (!userMarker) {
                   userMarker = L.marker([lat, lng], { icon: userIcon, zIndexOffset: 9999 }).addTo(map);
                 } else {
-                  userMarker.setLatLng([lat, lng]); // Update position as user moves
+                  userMarker.setLatLng([lat, lng]);
                 }
               };
             </script>
           </body>
         </html>
     `;
-  }, [formattedRoutes, selectedIndex, coordinateRoute]);
+  }, [formattedRoutes, coordinateRoute]);
 
   // 3. EVENT HANDLERS
   const handleJobPress = (job: any, index: number) => {
     const now = Date.now();
     const DOUBLE_PRESS_DELAY = 300;
 
-    // Detect double click
     if (lastPress && (now - lastPress) < DOUBLE_PRESS_DELAY && selectedIndex === index) {
       setExpandedPhoneIndex(expandedPhoneIndex === index ? null : index);
     } else {
-      // Standard single click behavior
       setSelectedIndex(index);
-      const flyToCode = `
+      
+      // Updated JavaScript injection
+      const updateCode = `
+        if (window.highlightMarker) {
+          window.highlightMarker(${index});
+        }
         map.setView([${job.lat}, ${job.lng}], 16, {
           animate: true,
           duration: 1.0
         });
+        true;
       `;
-      webViewRef.current?.injectJavaScript(flyToCode);
+      webViewRef.current?.injectJavaScript(updateCode);
     }
     
     setLastPress(now);

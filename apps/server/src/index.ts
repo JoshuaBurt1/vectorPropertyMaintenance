@@ -7,6 +7,9 @@ import * as admin from "firebase-admin";
 import path from "path";
 import nodemailer from "nodemailer";
 
+// GLOBAL HELPERS
+const getTodayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
+
 // SECURE PAYPAL INTEGRATION
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID;
 const PAYPAL_APP_SECRET = process.env.PAYPAL_APP_SECRET;
@@ -196,7 +199,7 @@ const allowedOrigins = [
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1) {
+   if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
       callback(new Error("Not allowed by CORS"));
@@ -216,7 +219,7 @@ const transporter = nodemailer.createTransport({
 app.get("/api/schedule", async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
-    const todayStr = new Date().toLocaleDateString('en-CA');
+    const todayStr = getTodayStr();
     const snapshot = await db.collection("schedule")
       .where("dateString", ">=", todayStr)
       .get();
@@ -269,7 +272,7 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
     }
 
     const now = new Date();
-    const estDateString = now.toLocaleString("en-US", { timeZone: "EST" });
+    const estDateString = now.toLocaleString("en-US", { timeZone: "America/Toronto" });
     const estDate = new Date(estDateString);
     const currentHour = estDate.getHours();
 
@@ -548,7 +551,7 @@ cron.schedule("*/15 * * * *", async () => {
   console.log("⏳ [15-MIN SYNC] Checking for unoptimized routes across all active days...");
   
   try {
-    const todayStr = new Date().toLocaleDateString('en-CA');
+    const todayStr = getTodayStr();
     const scheduleSnapshot = await db.collection("schedule").where("dateString", ">=", todayStr).get();
     
     const uniqueDates = new Set<string>();
@@ -585,11 +588,11 @@ cron.schedule("*/15 * * * *", async () => {
 
       if (!workerToAssign) continue;
 
-      // Extract unique identifiers (like createdAt) to test if the array has actually changed
+      // Extract unique identifiers to test if the array has actually changed
       const rawIds = rawBookings.map(b => b.createdAt).sort().join("|");
       const existingIds = existingBookings.map(b => b.createdAt).sort().join("|");
 
-      // API Savings Check: Skip recalculation if the bookings haven't changed!
+      // Skip recalculation if the bookings haven't changed
       if (scheduleDoc.exists && rawIds === existingIds) {
         continue;
       }
@@ -637,6 +640,8 @@ cron.schedule("*/15 * * * *", async () => {
   } catch (error) {
     console.error("❌ [15-MIN SYNC Error]:", error);
   }
+}, { 
+  timezone: "America/Toronto" 
 });
 
 
@@ -644,7 +649,7 @@ cron.schedule("*/15 * * * *", async () => {
 cron.schedule("10 22 * * *", async () => {
   console.log("🚀 [EOD-MAINTENANCE] Starting cleanup and archival tasks...");
 
-  const todayStr = new Date().toLocaleDateString('en-CA');
+  const todayStr = getTodayStr();
   console.log(`[DEBUG] Reference Date -> Today: ${todayStr}`);
 
   try {
@@ -727,6 +732,8 @@ cron.schedule("10 22 * * *", async () => {
   } catch (error) {
     console.error("❌ [EOD-MAINTENANCE Error]:", error);
   }
+}, { 
+  timezone: "America/Toronto" 
 });
 
 app.get("/", (req, res) => {
