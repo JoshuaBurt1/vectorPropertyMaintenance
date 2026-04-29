@@ -15,6 +15,12 @@ const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID;
 const PAYPAL_APP_SECRET = process.env.PAYPAL_APP_SECRET;
 const PAYPAL_API_BASE = process.env.PAYPAL_API_BASE || "https://api-m.sandbox.paypal.com";
 
+let emailSystemStatus = {
+  status: "Initializing...",
+  lastError: null as string | null,
+  timestamp: new Date().toISOString()
+};
+
 // Helper: Generate PayPal Access Token
 async function generatePayPalAccessToken() {
   const auth = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_APP_SECRET}`).toString("base64");
@@ -219,11 +225,15 @@ const transporter = nodemailer.createTransport({
 });
 
 transporter.verify((error, success) => {
+  emailSystemStatus.timestamp = new Date().toISOString();
   if (error) {
-    console.error("❌ [NODEMAILER_ERROR] Connection failed:", error.message);
-    console.error("DEBUG INFO: Check your App Password and Port 465 status.");
+    emailSystemStatus.status = "FAILED";
+    emailSystemStatus.lastError = error.message;
+    console.error("❌ [NODEMAILER_ERROR]", error.message);
   } else {
-    console.log("✅ [NODEMAILER_SUCCESS] Server is ready to send emails");
+    emailSystemStatus.status = "READY";
+    emailSystemStatus.lastError = null;
+    console.log("✅ [NODEMAILER_SUCCESS] Connection established");
   }
 });
 
@@ -760,7 +770,11 @@ app.get("/", (req, res) => {
 });
 
 app.get("/health", (req, res) => {
-  res.json({ status: "API is running, scheduler is active." });
+  res.json({ 
+    api: "Running", 
+    scheduler: "Active",
+    emailSystem: emailSystemStatus
+  });
 });
 
 const isProd = process.env.NODE_ENV === "production";
