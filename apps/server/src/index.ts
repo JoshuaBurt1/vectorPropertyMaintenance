@@ -6,6 +6,7 @@ import cron from "node-cron";
 import * as admin from "firebase-admin";
 import path from "path";
 import nodemailer from "nodemailer";
+import SMTPTransport from "nodemailer/lib/smtp-transport";
 
 // GLOBAL HELPERS
 const getTodayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
@@ -218,11 +219,12 @@ const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 465,
   secure: true,
+  family: 4, 
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
-  },
-});
+  }
+} as SMTPTransport.Options);
 
 transporter.verify((error, success) => {
   emailSystemStatus.timestamp = new Date().toISOString();
