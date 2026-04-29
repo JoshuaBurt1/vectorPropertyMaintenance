@@ -56,8 +56,6 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * c; 
 }
 
-import { useMap, useMapEvents } from "react-leaflet";
-
 export default function BookingPage() {
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() => getStartOfWeek(new Date()));
   const [currentTime, setCurrentTime] = useState("");
