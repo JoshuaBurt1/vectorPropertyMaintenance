@@ -7,12 +7,94 @@ import * as admin from "firebase-admin";
 import path from "path";
 import nodemailer from "nodemailer";
 
-// SECURE PAYPAL INTEGRATION
+const app = express();
+const PORT = Number(process.env.PORT) || 8080;
+
+// =========================================================
+// 1. HEALTH CHECKS (Placed high up for Render's pinger)
+// =========================================================
+app.get("/", (req, res) => {
+  res.send("Vector Property Maintenance API is Live.");
+});
+
+app.get("/health", (req, res) => {
+  res.json({ status: "API is running, scheduler is active." });
+});
+
+// =========================================================
+// 2. SAFE INITIALIZATION
+// =========================================================
+let db: admin.firestore.Firestore;
+let transporter: nodemailer.Transporter;
+
+// Safe Firebase Init
+try {
+  let serviceAccount;
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+  } else {
+    const serviceAccountPath = path.resolve(__dirname, "../service-account.json");
+    serviceAccount = require(serviceAccountPath);
+  }
+
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    databaseURL: "https://vectorpm-df058.firebaseio.com" 
+  });
+
+  db = admin.firestore();
+  console.log("✅ VectorPM Firebase Admin connected");
+} catch (error) {
+  console.error("❌ CRITICAL: Firebase failed to initialize on startup. Check JSON variable.", error);
+}
+
+// Safe Nodemailer Init
+try {
+  transporter = nodemailer.createTransport({
+    service: "gmail", 
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  });
+} catch (error) {
+  console.error("❌ CRITICAL: Nodemailer failed to initialize.", error);
+}
+
+// =========================================================
+// 3. MIDDLEWARE
+// =========================================================
+app.use(express.json()); 
+
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://vectorpm-df058.web.app",
+  "https://vectorpm-df058.firebaseapp.com",
+  "https://vector-property-maintenance.web.app"
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+}));
+
+
+// =========================================================
+// 4. GLOBAL HELPERS & PAYPAL
+// =========================================================
+const getTodayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
+
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID;
 const PAYPAL_APP_SECRET = process.env.PAYPAL_APP_SECRET;
 const PAYPAL_API_BASE = process.env.PAYPAL_API_BASE || "https://api-m.sandbox.paypal.com";
 
-// Helper: Generate PayPal Access Token
 async function generatePayPalAccessToken() {
   const auth = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_APP_SECRET}`).toString("base64");
   const response = await fetch(`${PAYPAL_API_BASE}/v1/oauth2/token`, {
@@ -24,7 +106,9 @@ async function generatePayPalAccessToken() {
   return data.access_token;
 }
 
-// ROUTE OPTIMIZATION LOGIC
+// =========================================================
+// 5. ROUTE OPTIMIZATION LOGIC
+// =========================================================
 const HOME_BASE = { lat: 44.3894, lng: -79.6903 };
 
 function getDistance(p1: { lat: number; lng: number }, p2: { lat: number; lng: number }) {
@@ -38,7 +122,6 @@ function getDistance(p1: { lat: number; lng: number }, p2: { lat: number; lng: n
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
-// --- Helper for Road Distance & Geometry ---
 async function getRoadData(p1: { lat: number; lng: number }, p2: { lat: number; lng: number }): Promise<{ distance: number, coords: number[][] }> {
   try {
     const straightLineDist = getDistance(p1, p2);
@@ -69,7 +152,6 @@ async function getRoadData(p1: { lat: number; lng: number }, p2: { lat: number; 
   }
 }
 
-// Route Optimization
 async function generateDailyRoute(dateString: string) {
   console.log(`Generating & Optimizing Route Data for ${dateString}`);
   const slots = ["Morning", "Afternoon", "Evening"];
@@ -92,7 +174,6 @@ async function generateDailyRoute(dateString: string) {
       const bookings = data?.bookings || [];
 
       if (bookings.length > 0) {
-        // Greedy approach: Order by nearest OSRM distance inside the slot
         let unvisited = [...bookings];
         let sortedBookingsForSlot = [];
 
@@ -100,7 +181,6 @@ async function generateDailyRoute(dateString: string) {
           let bestIdx = 0;
           let minStraightDist = Infinity;
 
-          // 1. PRE-SORT LOCALLY: Find the nearest neighbor using straight-line distance
           for (let i = 0; i < unvisited.length; i++) {
             const b = unvisited[i];
             const bLoc = { lat: b.location[0], lng: b.location[1] };
@@ -112,12 +192,10 @@ async function generateDailyRoute(dateString: string) {
             }
           }
 
-          // 2. FETCH ROAD DATA ONCE: Now that we have the "likely" winner, get OSRM data
           const nextBooking = unvisited[bestIdx];
           const nextLoc = { lat: nextBooking.location[0], lng: nextBooking.location[1] };
           const bestRoadData = await getRoadData(currentPos, nextLoc);
 
-          // 3. UPDATE TOTALS
           totalStraightDist += minStraightDist;
           totalRoadDist += bestRoadData.distance;
 
@@ -126,7 +204,6 @@ async function generateDailyRoute(dateString: string) {
             coordinate_route.push(...flattenedPath);
           }
 
-          // Move current position to the new job and remove it from unvisited
           currentPos = nextLoc;
           jobCount++;
           fullDailyRoute.push(nextBooking);
@@ -135,13 +212,11 @@ async function generateDailyRoute(dateString: string) {
           unvisited.splice(bestIdx, 1);
         }
 
-        // Save the OSRM-sorted order back to the slot document
         batch.update(docRef, { bookings: sortedBookingsForSlot });
       }
     }
   }
 
-  // Return to base
   totalStraightDist += getDistance(currentPos, HOME_BASE);
   const finalReturnRoad = await getRoadData(currentPos, HOME_BASE);
   totalRoadDist += finalReturnRoad.distance;
@@ -150,7 +225,6 @@ async function generateDailyRoute(dateString: string) {
     coordinate_route.push(...flattenedReturn);
   }
 
-  // Commit the sorted bookings to the schedule slots
   await batch.commit();
   
   console.log(`--- Route Generation Complete ---`);
@@ -164,59 +238,32 @@ async function generateDailyRoute(dateString: string) {
   };
 }
 
-let serviceAccount;
 
-if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-} else {
-  const serviceAccountPath = path.resolve(__dirname, "../service-account.json");
-  serviceAccount = require(serviceAccountPath);
-}
+// =========================================================
+// 6. ENDPOINTS
+// =========================================================
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-  databaseURL: "https://vectorpm-df058.firebaseio.com" 
+let clients: Response[] = [];
+
+app.get("/api/schedule/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  clients.push(res);
+  req.on("close", () => {
+    clients = clients.filter(client => client !== res);
+  });
 });
 
-const db = admin.firestore();
-console.log("✅ VectorPM Firebase Admin connected");
-
-const app = express();
-const PORT = process.env.PORT || 8080;
-
-app.use(express.json()); 
-
-const allowedOrigins = [
-  "http://localhost:3000",
-  "https://vectorpm-df058.web.app",
-  "https://vectorpm-df058.firebaseapp.com",
-  "https://vector-property-maintenance.web.app"
-];
-
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
-}));
-
-const transporter = nodemailer.createTransport({
-  service: "gmail", 
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+const broadcastUpdate = (data: any) => {
+  clients.forEach(client => client.write(`data: ${JSON.stringify(data)}\n\n`));
+};
 
 app.get("/api/schedule", async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
-    const todayStr = new Date().toLocaleDateString('en-CA');
+    const todayStr = getTodayStr();
     const snapshot = await db.collection("schedule")
       .where("dateString", ">=", todayStr)
       .get();
@@ -237,23 +284,6 @@ app.get("/api/schedule", async (req: Request, res: Response) => {
   }
 });
 
-let clients: Response[] = [];
-
-app.get("/api/schedule/stream", (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-
-  clients.push(res);
-  req.on("close", () => {
-    clients = clients.filter(client => client !== res);
-  });
-});
-
-const broadcastUpdate = (data: any) => {
-  clients.forEach(client => client.write(`data: ${JSON.stringify(data)}\n\n`));
-};
-
 app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
   try {
     const { name, email, address, phone, location, service, date, timeSlot } = req.body;
@@ -269,25 +299,31 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
     }
 
     const now = new Date();
-    const currentHour = now.getHours();
-    const isToday = new Date(date).toDateString() === now.toDateString();
+    const torontoDateStr = now.toLocaleDateString("en-CA", { timeZone: "America/Toronto" }); 
+    const torontoHour = parseInt(now.toLocaleTimeString("en-US", { 
+      timeZone: "America/Toronto", 
+      hour12: false, 
+      hour: "2-digit" 
+    }));
+
+    const bookingDateOnly = date.substring(0, 10); 
+    const isToday = bookingDateOnly === torontoDateStr;
 
     if (isToday) {
       let isExpired = false;
-      if (timeSlot.startsWith("Morning") && currentHour >= 8) isExpired = true;
-      if (timeSlot.startsWith("Afternoon") && currentHour >= 12) isExpired = true;
-      if (timeSlot.startsWith("Evening") && currentHour >= 16) isExpired = true;
+      if (timeSlot.startsWith("Morning") && torontoHour >= 8) isExpired = true;
+      if (timeSlot.startsWith("Afternoon") && torontoHour >= 12) isExpired = true;
+      if (timeSlot.startsWith("Evening") && torontoHour >= 16) isExpired = true;
 
       if (isExpired) {
         res.status(400).json({ 
-          error: "This time slot has already started and is no longer available for booking." 
+          error: "This time slot is no longer available. Please select a later time." 
         });
         return;
       }
     }
 
-    const dateObj = new Date(date);
-    const dateString = dateObj.toISOString().split('T')[0]; 
+    const dateString = bookingDateOnly;
     const slotSlug = timeSlot.split(' ')[0]; 
     const documentId = `${dateString}_${slotSlug}`; 
 
@@ -374,7 +410,6 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// Route 1: Create Order securely on the server
 app.post("/api/paypal/create-order", async (req: Request, res: Response) => {
   try {
     const accessToken = await generatePayPalAccessToken();
@@ -393,7 +428,7 @@ app.post("/api/paypal/create-order", async (req: Request, res: Response) => {
             description: `${serviceName || 'Service'} - Booking Deposit`,
             amount: {
               currency_code: "CAD",
-              value: "50.00", // SERVER-DEFINED: Cannot be tampered with by the client
+              value: "50.00", 
             },
           },
         ],
@@ -408,7 +443,6 @@ app.post("/api/paypal/create-order", async (req: Request, res: Response) => {
   }
 });
 
-// Route 2: Capture Order securely on the server
 app.post("/api/paypal/capture-order", async (req: Request, res: Response) => {
   try {
     const { orderID } = req.body;
@@ -534,15 +568,16 @@ app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Prom
 
 
 // =========================================================
-// BACKGROUND CRON TASKS
+// 7. BACKGROUND CRON TASKS
 // =========================================================
 
-// 1. ROUTE SYNC & OPTIMIZATION (Runs Every 15 Minutes)
+// ROUTE SYNC & OPTIMIZATION (Runs Every 15 Minutes)
 cron.schedule("*/15 * * * *", async () => {
   console.log("⏳ [15-MIN SYNC] Checking for unoptimized routes across all active days...");
+  if (!db) { console.log("DB not ready, skipping cron."); return; }
   
   try {
-    const todayStr = new Date().toLocaleDateString('en-CA');
+    const todayStr = getTodayStr();
     const scheduleSnapshot = await db.collection("schedule").where("dateString", ">=", todayStr).get();
     
     const uniqueDates = new Set<string>();
@@ -552,7 +587,6 @@ cron.schedule("*/15 * * * *", async () => {
       const scheduleRef = db.collection("admin_workersSchedule").doc(dateStr);
       const scheduleDoc = await scheduleRef.get();
 
-      // Gather all raw bookings currently slated for this day across all periods
       const slots = ["Morning", "Afternoon", "Evening"];
       let rawBookings: any[] = [];
       
@@ -579,11 +613,9 @@ cron.schedule("*/15 * * * *", async () => {
 
       if (!workerToAssign) continue;
 
-      // Extract unique identifiers (like createdAt) to test if the array has actually changed
       const rawIds = rawBookings.map(b => b.createdAt).sort().join("|");
       const existingIds = existingBookings.map(b => b.createdAt).sort().join("|");
 
-      // API Savings Check: Skip recalculation if the bookings haven't changed!
       if (scheduleDoc.exists && rawIds === existingIds) {
         continue;
       }
@@ -591,10 +623,32 @@ cron.schedule("*/15 * * * *", async () => {
       console.log(`[SYNC] Updating route for ${dateStr}. Diff detected, pulling fresh OSRM data...`);
       const routeData = await generateDailyRoute(dateStr);
 
+      const statusMap: Record<string, string> = {};
+      existingBookings.forEach((b: any) => {
+        const tId = b.transactionId;
+        const cAt = b.createdAt?.toString(); 
+        
+        if (b.status) {
+          if (tId) statusMap[tId] = b.status;
+          if (cAt) statusMap[cAt] = b.status;
+        }
+      });
+
+      const preservedRoute = routeData.route.map((newBooking: any) => {
+        const tId = newBooking.transactionId;
+        const cAt = newBooking.createdAt?.toString();
+        const existingStatus = (tId && statusMap[tId]) || (cAt && statusMap[cAt]);
+
+        return {
+          ...newBooking,
+          status: existingStatus || "pending"
+        };
+      });
+
       await scheduleRef.set({
         worker: workerToAssign,
         date: dateStr,
-        assignedRoute: routeData.route,
+        assignedRoute: preservedRoute,
         coordinate_route: routeData.coordinate_route,
         distance: routeData.distance,
         straightLineTotal: routeData.straightLineTotal,
@@ -605,21 +659,23 @@ cron.schedule("*/15 * * * *", async () => {
   } catch (error) {
     console.error("❌ [15-MIN SYNC Error]:", error);
   }
+}, { 
+  timezone: "America/Toronto" 
 });
 
 
-// 2. END OF DAY MAINTENANCE (Runs at 10:10 PM)
+// END OF DAY MAINTENANCE (Runs at 10:10 PM)
 cron.schedule("10 22 * * *", async () => {
   console.log("🚀 [EOD-MAINTENANCE] Starting cleanup and archival tasks...");
+  if (!db) { console.log("DB not ready, skipping cron."); return; }
 
-  const todayStr = new Date().toLocaleDateString('en-CA');
+  const todayStr = getTodayStr();
   console.log(`[DEBUG] Reference Date -> Today: ${todayStr}`);
 
   try {
     const batch = db.batch();
     let writeCount = 0;
 
-    // PART 1: DELETE RAW BOOKINGS (Today and Past)
     const scheduleSnapshot = await db.collection("schedule").get();
     scheduleSnapshot.docs.forEach((doc) => {
       const docDate = doc.id.split('_')[0]; 
@@ -629,7 +685,6 @@ cron.schedule("10 22 * * *", async () => {
       }
     });
 
-    // PART 2: PROCESS & ARCHIVE WORKER ROUTES (Today and Past)
     console.log("[ARCHIVE] Processing 'admin_workersSchedule'...");
     const workerScheduleSnapshot = await db.collection("admin_workersSchedule").get();
 
@@ -638,10 +693,8 @@ cron.schedule("10 22 * * *", async () => {
         const data = doc.data();
         const routes: any[] = data.assignedRoute || [];
         
-        // 1. Separate parent metadata from the coordinate arrays
         const { coordinate_route: _, assignedRoute: __, ...parentMeta } = data;
 
-        // 2. Helper to filter routes by status and strip child-level coordinates
         const getArchivedSubRoute = (status: string) => {
           const filtered = routes
             .filter((r: any) => r.status === status)
@@ -649,7 +702,6 @@ cron.schedule("10 22 * * *", async () => {
               const { coordinate_route, ...routeData } = r;
               return {
                 ...routeData,
-                // Ensure worker and update info persist in individual items
                 worker: r.worker || data.worker,
                 updatedAt: r.updatedAt || data.updatedAt
               };
@@ -660,22 +712,20 @@ cron.schedule("10 22 * * *", async () => {
         const completed = getArchivedSubRoute("completed");
         const pending = getArchivedSubRoute("pending");
 
-        // 3. Archive Completed jobs to 'admin_complete'
         if (completed) {
           const completeRef = db.collection("admin_complete").doc(doc.id);
           batch.set(completeRef, { 
             ...parentMeta,
-            assignedRoute: completed, // Replaces 'entries' with the original field name
+            assignedRoute: completed,
             archivedAt: new Date().toISOString() 
           }, { merge: true });
         }
 
-        // 4. Archive Pending jobs to 'admin_incomplete'
         if (pending) {
           const incompleteRef = db.collection("admin_incomplete").doc(doc.id);
           batch.set(incompleteRef, { 
             ...parentMeta,
-            assignedRoute: pending, // Replaces 'entries' with the original field name
+            assignedRoute: pending, 
             archivedAt: new Date().toISOString() 
           }, { merge: true });
         }
@@ -695,22 +745,20 @@ cron.schedule("10 22 * * *", async () => {
   } catch (error) {
     console.error("❌ [EOD-MAINTENANCE Error]:", error);
   }
+}, { 
+  timezone: "America/Toronto" 
 });
 
-app.get("/", (req, res) => {
-  res.send("Vector Property Maintenance API is Live.");
-});
-
-app.get("/health", (req, res) => {
-  res.json({ status: "API is running, scheduler is active." });
-});
+// =========================================================
+// 8. SERVER START
+// =========================================================
 
 const isProd = process.env.NODE_ENV === "production";
 const SERVER_URL = isProd 
   ? "https://vectorpropertymaintenance.onrender.com" 
   : `http://localhost:${PORT}`;
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
   console.log(`📡 Health check: ${SERVER_URL}/health`);
 });
