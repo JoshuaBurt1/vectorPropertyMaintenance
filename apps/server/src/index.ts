@@ -364,41 +364,41 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
     console.log(`[BOOKING] Slot updated: ${documentId}. Route optimization queued for background sync.`);
     broadcastUpdate({ type: "REFRESH_SCHEDULE", documentId });
 
-    try {
-      const formattedDate = new Date(date).toLocaleDateString('en-US', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-
-      const mailOptions = {
-        from: `"Vector Property Maintenance" <${process.env.EMAIL_USER}>`,
-        to: email,
-        subject: `Booking Confirmed: ${service}`,
-        html: `
-          <div style="font-family: sans-serif; max-width: 600px; color: #333;">
-            <h2>Booking Confirmation</h2>
-            <p>Hi <b>${name}</b>,</p>
-            <p>We've received your request for <b>${service}</b>.</p>
-            <hr />
-            <p><b>Date:</b> ${formattedDate}</p>
-            <p><b>Time Window:</b> ${timeSlot}</p>
-            <p><b>Location:</b> ${address}</p>
-            <p><b>Geocoordinate:</b> ${location}</p>
-            <hr />
-            <p>Best regards,<br/>The Vector Team</p>
-          </div>
-        `,
-      };
-
-      await transporter.sendMail(mailOptions);
-      console.log(`[EMAIL] Sent to ${email}`);
-    } catch (emailError) {
-      console.error("❌ Failed to send confirmation email:", emailError);
-    }
-
+    // 1. Send the success response to the user IMMEDIATELY
     res.status(201).json({ success: true, documentId });
+
+    // 2. Prepare the email payload
+    const formattedDate = new Date(date).toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+
+    const mailOptions = {
+      from: `"Vector Property Maintenance" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: `Booking Confirmed: ${service}`,
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; color: #333;">
+          <h2>Booking Confirmation</h2>
+          <p>Hi <b>${name}</b>,</p>
+          <p>We've received your request for <b>${service}</b>.</p>
+          <hr />
+          <p><b>Date:</b> ${formattedDate}</p>
+          <p><b>Time Window:</b> ${timeSlot}</p>
+          <p><b>Location:</b> ${address}</p>
+          <p><b>Geocoordinate:</b> ${location}</p>
+          <hr />
+          <p>Best regards,<br/>The Vector Team</p>
+        </div>
+      `,
+    };
+
+    // 3. Fire off the email in the background without awaiting it.
+    transporter.sendMail(mailOptions)
+      .then(() => console.log(`[EMAIL] Sent to ${email}`))
+      .catch((emailError) => console.error("❌ Failed to send confirmation email:", emailError));
     
   } catch (error: any) {
     if (error.message === "SLOT_FULL") {
@@ -406,7 +406,10 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
       return;
     }
     console.error("❌ Critical error during booking:", error);
-    res.status(500).json({ error: "Internal server error during booking." });
+    // Ensure we only send an error response if we haven't already sent a success response
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Internal server error during booking." });
+    }
   }
 });
 
