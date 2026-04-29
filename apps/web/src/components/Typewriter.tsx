@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 
-const words = ["home.", "office.", "garage.", "warehouse.", "garden.", "front yard.", "backroom.", "parking lot."];
+const words = ["home.", "yard.", "driveway.", "warehouse.", "garage.", "office.", "backroom.", "parking lot."];
 
 export default function Typewriter() {
   const [hasMounted, setHasMounted] = useState(false);  

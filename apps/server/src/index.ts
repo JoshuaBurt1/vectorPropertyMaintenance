@@ -271,34 +271,42 @@ app.post("/api/book", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // --- START REPLACEMENT ---
     const now = new Date();
-    const estDateString = now.toLocaleString("en-US", { timeZone: "America/Toronto" });
-    const estDate = new Date(estDateString);
-    const currentHour = estDate.getHours();
+    
+    // Get Toronto-specific Date and Hour
+    const torontoDateStr = now.toLocaleDateString("en-CA", { timeZone: "America/Toronto" }); // "YYYY-MM-DD"
+    const torontoHour = parseInt(now.toLocaleTimeString("en-US", { 
+      timeZone: "America/Toronto", 
+      hour12: false, 
+      hour: "2-digit" 
+    }));
 
-    const todayEST = estDate.toISOString().split('T')[0];
-    const bookingDateEST = new Date(date).toISOString().split('T')[0];
-    const isToday = bookingDateEST === todayEST;
+    // FIX: Do NOT use new Date(date). The frontend already sends the exact Toronto string (YYYY-MM-DD).
+    const bookingDateOnly = date.substring(0, 10); 
+    const isToday = bookingDateOnly === torontoDateStr;
 
     if (isToday) {
       let isExpired = false;
-      // Now 1:30 PM EST will correctly evaluate currentHour as 13
-      if (timeSlot.startsWith("Morning") && currentHour >= 8) isExpired = true;
-      if (timeSlot.startsWith("Afternoon") && currentHour >= 12) isExpired = true;
-      if (timeSlot.startsWith("Evening") && currentHour >= 16) isExpired = true;
+
+      // Logic: If it's 9:01 AM, the 8:00 AM Morning slot is expired.
+      if (timeSlot.startsWith("Morning") && torontoHour >= 8) isExpired = true;
+      if (timeSlot.startsWith("Afternoon") && torontoHour >= 12) isExpired = true;
+      if (timeSlot.startsWith("Evening") && torontoHour >= 16) isExpired = true;
 
       if (isExpired) {
         res.status(400).json({ 
-          error: "This time slot has already started and is no longer available for booking." 
+          error: "This time slot is no longer available. Please select a later time." 
         });
         return;
       }
     }
 
-    const dateObj = new Date(date);
-    const dateString = dateObj.toISOString().split('T')[0]; 
+    // Use the perfectly formatted string directly for the database ID
+    const dateString = bookingDateOnly;
     const slotSlug = timeSlot.split(' ')[0]; 
     const documentId = `${dateString}_${slotSlug}`; 
+    // --- END REPLACEMENT ---
 
     await db.runTransaction(async (t) => {
       const slotRef = db.collection("schedule").doc(documentId);

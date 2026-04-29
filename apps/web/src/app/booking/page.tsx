@@ -207,21 +207,21 @@ export default function BookingPage() {
   };
 
   const handleBookingSubmission = async (transactionId: string) => {
-    if (!selectedBlock) return;
-    setIsSubmitting(true);
+  if (!selectedBlock) return;
+  setIsSubmitting(true);
 
-    try {
-      const response = await fetch(`${API_BASE}/api/book`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...formData,
-          date: selectedBlock.date.toISOString(),
-          timeSlot: selectedBlock.time,
-          transactionId,
-          location: userLocation ? [userLocation.lat, userLocation.lng] : null
-        }),
-      });
+  try {
+    const response = await fetch(`${API_BASE}/api/book`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...formData,
+        date: selectedBlock.date.toLocaleDateString('en-CA', { timeZone: 'America/Toronto' }),
+        timeSlot: selectedBlock.time,
+        transactionId,
+        location: userLocation ? [userLocation.lat, userLocation.lng] : null
+      }),
+    });
 
       const result = await response.json();
 
@@ -297,38 +297,6 @@ export default function BookingPage() {
     }
   };
 
-  // 3. Map Click Event Component -> Reverse Geocode
-  const MapClickHandler = () => {
-    useMapEvents({
-      click(e: any) {
-        const { lat, lng } = e.latlng;
-        handleGeocode(`${lat},${lng}`, true);
-      },
-    });
-    return null;
-  };
-
-  // Component to fly to user location when it changes
-  const MapUpdater = ({ center }: { center: { lat: number; lng: number } }) => {
-    const map = useMap();
-
-    useEffect(() => {
-      if (map) {
-        map.invalidateSize();
-        
-        map.setView([center.lat, center.lng], map.getZoom());
-
-        const timer = setTimeout(() => {
-          map.invalidateSize();
-        }, 1000); 
-
-        return () => clearTimeout(timer);
-      }
-    }, [center, map]);
-    
-    return null;
-  };
-
   const isFormValid = 
     formData.name.trim() !== "" && 
     isAddressValid && 
@@ -337,7 +305,7 @@ export default function BookingPage() {
     formData.email.includes("@");
 
   const getSlotFullness = (day: Date, time: string) => {
-    const dayString = day.toISOString().split('T')[0];
+    const dayString = day.toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
     const slot = bookedSlots.find(b => b.date === dayString && b.timeSlot === time);
     return slot ? slot.count : 0;
   };
@@ -389,7 +357,7 @@ export default function BookingPage() {
               ← Previous Week
             </button>
             <span className="font-semibold text-lg">
-              Week of {currentWeekStart.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}, {currentTime} ({userTimezone})
+              Week of {currentWeekStart.toLocaleDateString('en-CA', { month: 'long', day: 'numeric', year: 'numeric' })}, {currentTime} ({userTimezone})
             </span>
             <button onClick={() => shiftWeek(1)} className="p-2 hover:bg-zinc-100 rounded-lg">
               Next Week →
@@ -400,24 +368,33 @@ export default function BookingPage() {
             {days.map((day, index) => (
               <div key={index} className="flex flex-col gap-3">
                 <div className="text-center pb-2 border-b border-zinc-200">
-                  <div className="font-bold">{day.toLocaleDateString('en-US', { weekday: 'short' })}</div>
-                  <div className="text-sm text-zinc-500">{day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
+                  <div className="font-bold">{day.toLocaleDateString('en-CA', { weekday: 'short' })}</div>
+                  <div className="text-sm text-zinc-500">{day.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}</div>
                 </div>
                 
                 {timeSlots.map((time) => {
                   if (isLoading) return <SkeletonSlot key={time} />;
 
-                  const dayStr = day.toDateString();
-                  const todayStr = new Date().toDateString();
+                  // Compare YYYY-MM-DD strings localized to Toronto
+                  const dayStrToronto = day.toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
+                  const todayStrToronto = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
 
-                  const isPastDay = day.getTime() < today.getTime();
-                  const currentHour = new Date().getHours();
+                  // A day is in the past if its string is alphabetically less than today's
+                  const isPastDay = dayStrToronto < todayStrToronto;
+                  const isToday = dayStrToronto === todayStrToronto;
+
+                  const estTimezone = parseInt(new Intl.DateTimeFormat('en-US', {
+                    hour: 'numeric',
+                    hour12: false,
+                    timeZone: 'America/Toronto'
+                  }).format(new Date()));
+                  
                   let isPastSlot = false;
 
-                  if (dayStr === todayStr) {
-                    if (time.startsWith("Morning") && currentHour >= 8) isPastSlot = true;
-                    if (time.startsWith("Afternoon") && currentHour >= 12) isPastSlot = true;
-                    if (time.startsWith("Evening") && currentHour >= 16) isPastSlot = true;
+                  if (isToday) {
+                    if (time.startsWith("Morning") && estTimezone >= 8) isPastSlot = true;
+                    if (time.startsWith("Afternoon") && estTimezone >= 12) isPastSlot = true;
+                    if (time.startsWith("Evening") && estTimezone >= 16) isPastSlot = true;
                   }
 
                   const fullnessCount = getSlotFullness(day, time);
@@ -430,7 +407,6 @@ export default function BookingPage() {
                   let fullnessClass = "text-emerald-600";
 
                   if (isPast) {
-                    // If it's in the past, we don't care how full it was
                     statusLabel = "Unavailable";
                     fullnessClass = "text-zinc-400";
                   } else if (isFullyBooked) {
@@ -497,7 +473,7 @@ export default function BookingPage() {
               <div className={`p-8 w-full ${isMapVisible ? 'md:w-1/2 overflow-y-auto' : 'overflow-y-auto'} relative z-10 bg-white`}>
                 <h2 className="text-2xl font-bold mb-1">Confirm Booking</h2>
                 <p className="text-sm text-zinc-500 mb-6">
-                  {selectedBlock.date.toLocaleDateString()} • {selectedBlock.time}
+                  {selectedBlock.date.toLocaleDateString('en-CA')} • {selectedBlock.time}
                 </p>
 
                 <div className="flex flex-col gap-4">
