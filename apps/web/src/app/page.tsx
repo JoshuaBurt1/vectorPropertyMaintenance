@@ -24,7 +24,7 @@ export default function Home() {
       {/* Header Section */}
       <nav className="flex items-center justify-between px-8 py-6 border-b border-zinc-100">
         
-        {/* Left Side: Logo & Name - Added grow to span space */}
+        {/* Left Side: Logo & Name */}
         <div className="flex grow items-center gap-4">
           <Image 
             src="/assets/icon.png"
@@ -47,16 +47,6 @@ export default function Home() {
           >
             Schedule a Service
           </Link>
-          
-          <p className="text-zinc-500 text-xs">
-            Have a custom project? {" "}
-            <a 
-              href="mailto:VectorPM@gmail.com" 
-              className="text-zinc-900 font-medium underline underline-offset-4 hover:text-zinc-600 transition-colors"
-            >
-              VectorPM@gmail.com
-            </a>
-          </p>
         </div>
       </nav>
 
@@ -77,9 +67,10 @@ export default function Home() {
           top-tier property care tailored to your specific schedule.
         </p>
 
+        {/* Service Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
           {services.map((service) => (
-            <div key={service.title} className="p-6 border border-zinc-200 rounded-2xl hover:border-black transition-colors bg-white group flex flex-col">
+            <div key={service.title} className="p-6 border border-zinc-200 rounded-2xl hover:border-black transition-colors bg-white group flex flex-col text-left">
               <h3 className="font-bold mb-2 group-hover:translate-x-1 transition-transform">
                 {service.title}
               </h3>
@@ -88,6 +79,18 @@ export default function Home() {
               </p>
             </div>
           ))}
+        </div>
+
+        <div className="mt-12 text-center">
+          <p className="text-zinc-500 text-sm">
+            Have a custom project?{" "}
+            <a 
+              href="mailto:VectorPM@gmail.com" 
+              className="text-zinc-900 font-semibold underline underline-offset-4 hover:text-zinc-600 transition-colors"
+            >
+              VectorPM@gmail.com
+            </a>
+          </p>
         </div>
       </main>
 

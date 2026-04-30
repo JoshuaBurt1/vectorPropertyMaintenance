@@ -498,7 +498,6 @@ app.get("/api/search", async (req: Request, res: Response): Promise<void> => {
               period: booking.period || "Unknown time",
               name: booking.name,
               service: booking.service,
-              // New fields requested for cancellation
               documentId: doc.id,
               bookingIndex: index,
               transactionId: booking.transactionId
