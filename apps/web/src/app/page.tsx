@@ -25,7 +25,7 @@ export default function Home() {
       <nav className="flex items-center justify-between px-8 py-6 border-b border-zinc-100">
         
         {/* Left Side: Logo & Name - Added grow to span space */}
-        <div className="flex flex-grow items-center gap-4">
+        <div className="flex grow items-center gap-4">
           <Image 
             src="/assets/icon.png"
             alt="Vector Property Maintenance Logo" 

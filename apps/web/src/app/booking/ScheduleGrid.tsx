@@ -12,8 +12,14 @@ export interface Booking {
 }
 
 export interface SearchedBooking {
+  name: string;
   date: string;
   timeSlot: string;
+  period: string;
+  service: string;
+  documentId: string;   
+  bookingIndex: number;
+  transactionId: string;
 }
 
 interface ScheduleGridProps {
@@ -94,7 +100,7 @@ export default function ScheduleGrid({
             const isHighlighted = isRecentlyBooked || isSearched;
 
             let statusLabel = "0% Full";
-            let fullnessClass = "text-emerald-600";
+            let fullnessClass = "text-blue-600";
 
             if (isRecentlyBooked) {
               statusLabel = "Booked by You!";
@@ -110,10 +116,10 @@ export default function ScheduleGrid({
               fullnessClass = "text-blue-600 font-semibold";
             } else if (fullnessCount === 1) {
               statusLabel = "50% Full";
-              fullnessClass = "text-teal-600";
+              fullnessClass = "text-blue-400";
             } else {
               statusLabel = "0% Full";
-              fullnessClass = "text-emerald-600";
+              fullnessClass = "text-zinc-600";
             }
 
             return (

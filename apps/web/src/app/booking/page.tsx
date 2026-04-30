@@ -11,8 +11,8 @@ import ScheduleGrid, { TimeSlot, Booking, SearchedBooking } from "./ScheduleGrid
 import 'leaflet/dist/leaflet.css';
 
 const API_BASE = typeof window !== "undefined" && window.location.hostname === "localhost"
-    ? "http://localhost:8080"
-    : "https://vectorpropertymaintenance.onrender.com";
+  ? "http://localhost:8080"
+  : "https://vectorpropertymaintenance.onrender.com";
 
 const OPENCAGE_API_KEY = process.env.NEXT_PUBLIC_OPENCAGE_API_KEY;
 const HOME_BASE = { lat: 44.3894, lng: -79.6903 }; 
@@ -66,6 +66,12 @@ export default function BookingPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [searchedBookings, setSearchedBookings] = useState<SearchedBooking[]>([]);
+
+  // Cancellation States
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [bookingToCancel, setBookingToCancel] = useState<SearchedBooking | null>(null);
+  const [hoveredCancelIndex, setHoveredCancelIndex] = useState<number | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   // Map & Location States
   const [isMapVisible, setIsMapVisible] = useState(false);
@@ -194,7 +200,7 @@ export default function BookingPage() {
     setIsMapVisible(false);
     setUserLocation(null);
     setIsAddressValid(false);
-    setFormData({ name: "", address: "", email: "", phone: "", service: "Grass Cutting" }); // Reset phone
+    setFormData({ name: "", address: "", email: "", phone: "", service: "Grass Cutting" }); 
   };
 
   const handleBookingSubmission = async (transactionId: string) => {
@@ -277,6 +283,55 @@ export default function BookingPage() {
       alert("Error reaching the database.");
     } finally {
       setIsSearching(false);
+    }
+  };
+
+  const handleCancelBooking = async () => {
+    if (!bookingToCancel) return;
+
+    // Confirming inside the function as a double-check
+    const isConfirmed = window.confirm(
+      "Are you sure you want to cancel this booking? If the booking is not for today, your $50 deposit will be refunded."
+    );
+    if (!isConfirmed) return;
+
+    setIsCancelling(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          documentId: bookingToCancel.documentId,
+          bookingIndex: bookingToCancel.bookingIndex,
+          transactionId: bookingToCancel.transactionId,
+          originalDate: bookingToCancel.date 
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        alert(data.message || "Booking cancelled successfully.");
+
+        // Remove from the local search list
+        setSearchedBookings((prev) =>
+          prev.filter(
+            (b) => !(b.documentId === bookingToCancel.documentId && b.bookingIndex === bookingToCancel.bookingIndex)
+          )
+        );
+
+        fetchBookings();
+        setCancelModalOpen(false);
+        setBookingToCancel(null);
+      } else {
+        alert(`Error: ${data.error || "Failed to cancel."}`);
+      }
+    } catch (error) {
+      console.error("Cancellation error:", error);
+      alert("Error reaching the server.");
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -395,35 +450,78 @@ export default function BookingPage() {
                 <h1 className="text-4xl font-bold tracking-tight mb-2">Schedule Service</h1>
                 <p className="text-zinc-600">Click on a schedule block to book your time.</p>
               </div>
+              <div className="relative flex flex-col items-end gap-2 w-full md:w-auto">
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                  <input
+                    type="text"
+                    placeholder="Find existing bookings by email or phone."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                    className="px-4 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black w-full md:w-100"
+                  />
+                  <button
+                    onClick={handleSearch}
+                    disabled={isSearching}
+                    className="px-6 py-2 bg-black text-white rounded-lg text-sm font-semibold hover:bg-zinc-800 transition-colors disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {isSearching ? "..." : "Search"}
+                  </button>
+                </div>
 
-              <div className="flex flex-col items-end gap-3 w-full md:w-auto min-h-10 justify-center">
-                {showWarmingUp ? (
-                  /* 1. Display ONLY the Warming Up Indicator if true */
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 text-slate-700 rounded-full text-xs animate-pulse shadow-sm">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-slate-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-slate-500"></span>
-                    </span>
-                    Server Warming Up...
-                  </div>
-                ) : (
-                  /* 2. ELSE display the Search Bar */
-                  <div className="flex items-center gap-2 w-full md:w-auto">
-                    <input
-                      type="text"
-                      placeholder="Find existing booking..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                      className="px-4 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black w-full md:w-64"
-                    />
-                    <button
-                      onClick={handleSearch}
-                      disabled={isSearching}
-                      className="px-6 py-2 bg-black text-white rounded-lg text-sm font-semibold hover:bg-zinc-800 transition-colors disabled:opacity-50 whitespace-nowrap"
-                    >
-                      {isSearching ? "..." : "Search"}
-                    </button>
+                {/* Display found results under the search bar */}
+                {searchedBookings.length > 0 && (
+                  <div className="absolute top-full right-0 mt-2 w-full md:w-72 bg-white border border-zinc-200 shadow-xl rounded-lg p-3 z-50 text-sm flex flex-col gap-2">
+                    <div className="flex justify-between items-center border-b border-zinc-100 pb-2 mb-1">
+                      <span className="font-semibold text-zinc-800">Found Bookings</span>
+                      <button 
+                        onClick={() => {
+                          setSearchedBookings([]);
+                          setSearchQuery("");
+                        }} 
+                        className="text-zinc-400 hover:text-black font-bold"
+                        title="Clear search"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    
+                    <div className="max-h-60 overflow-y-auto flex flex-col gap-2">
+                      {searchedBookings.map((booking: SearchedBooking, idx: number) => { // Change 'any' to 'SearchedBooking'
+                        const fullTimeRange = timeSlots.find(slot => slot.toLowerCase().startsWith(booking.period?.toLowerCase()));
+                        const isHovered = hoveredCancelIndex === idx;
+
+                        return (
+                          <div 
+                            key={idx} 
+                            className={`relative bg-zinc-50 p-2.5 rounded-md flex flex-col transition-all duration-200 ${
+                              isHovered ? 'border-2 border-black' : 'border border-zinc-200'
+                            }`}
+                          >
+                            <button
+                              className="absolute top-2 right-2 text-zinc-400 hover:text-red-500 p-1 rounded-full hover:bg-red-50"
+                              onMouseEnter={() => setHoveredCancelIndex(idx)}
+                              onMouseLeave={() => setHoveredCancelIndex(null)}
+                              onClick={() => {
+                                setBookingToCancel(booking); 
+                                setCancelModalOpen(true);
+                              }}
+                              title="Cancel this booking"
+                            >
+                              ✕
+                            </button>
+                            <span className="font-bold text-black">
+                              {isHovered && <span className="text-red-600">Cancel </span>}
+                              {booking.date}
+                            </span>                            
+                            <span className="text-xs text-zinc-500 mt-1">{fullTimeRange}</span>    
+                            <span className="text-xs text-zinc-500 mt-1">
+                              {booking.service} • {booking.name}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </div>
@@ -470,6 +568,41 @@ export default function BookingPage() {
             © {new Date().getFullYear()} Vector Property Maintenance
           </p>
         </footer>
+
+        {/* Cancellation Modal */}
+        {cancelModalOpen && bookingToCancel && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full text-center">
+              <h3 className="text-xl font-bold mb-4 text-zinc-900">Cancel Booking?</h3>
+              <p className="text-zinc-600 mb-6">
+                Are you sure you want to cancel your <span className="font-semibold text-black">{bookingToCancel.service}</span> booking on <span className="font-semibold text-black">{bookingToCancel.date}</span>?
+                <br /><br />
+                <span className="font-bold text-red-600">
+                  {bookingToCancel.date === new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' }) 
+                    ? "Cancel, no refund" 
+                    : "Cancel, with full refund"}
+                </span>
+              </p>
+              
+              <div className="flex gap-3 justify-center">
+                <button
+                  onClick={() => setCancelModalOpen(false)}
+                  disabled={isCancelling}
+                  className="px-5 py-2.5 bg-zinc-100 text-zinc-800 rounded-lg font-semibold hover:bg-zinc-200 transition-colors"
+                >
+                  No, keep it
+                </button>
+                <button
+                  onClick={handleCancelBooking}
+                  disabled={isCancelling}
+                  className="px-5 py-2.5 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  {isCancelling ? "Cancelling..." : "Yes, cancel"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Extracted Booking Modal */}
         <BookingModal

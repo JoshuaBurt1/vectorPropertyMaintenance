@@ -467,6 +467,194 @@ app.post("/api/paypal/capture-order", async (req: Request, res: Response) => {
   }
 });
 
+// =========================================================
+// SEARCH ENDPOINT
+// =========================================================
+app.get("/api/search", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const query = req.query.q as string;
+    if (!query) {
+      res.status(400).json({ error: "Search query is required." });
+      return;
+    }
+
+    const searchStr = query.toLowerCase().trim();
+    
+    // Changed to scan 'schedule' to easily grab documentId, index, and transactionId
+    const snapshot = await db.collection("schedule").get();
+    let results: any[] = [];
+
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      
+      if (data.bookings && Array.isArray(data.bookings)) {
+        data.bookings.forEach((booking: any, index: number) => {
+          const emailMatch = booking.email && booking.email.toLowerCase().includes(searchStr);
+          const phoneMatch = booking.phone && booking.phone.includes(searchStr);
+          
+          if (emailMatch || phoneMatch) {
+            results.push({
+              date: booking.originalDate || data.dateString,
+              period: booking.period || "Unknown time",
+              name: booking.name,
+              service: booking.service,
+              // New fields requested for cancellation
+              documentId: doc.id,
+              bookingIndex: index,
+              transactionId: booking.transactionId
+            });
+          }
+        });
+      }
+    });
+
+    res.status(200).json(results);
+  } catch (error) {
+    console.error("Search error:", error);
+    res.status(500).json({ error: "Internal server error during search." });
+  }
+});
+
+// =========================================================
+// CANCEL ENDPOINT
+// =========================================================
+app.post("/api/cancel", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { documentId, bookingIndex, transactionId, originalDate } = req.body;
+
+    if (!documentId || bookingIndex === undefined || !originalDate) {
+      res.status(400).json({ error: "Missing required cancellation fields." });
+      return;
+    }
+
+    // Determine if the booking is for today (Toronto Timezone)
+    const now = new Date();
+    const torontoDateStr = now.toLocaleDateString("en-CA", { timeZone: "America/Toronto" });
+    const isToday = originalDate.substring(0, 10) === torontoDateStr;
+
+    // 1. Process Refund if the booking is NOT today
+    if (!isToday && transactionId) {
+      try {
+        const accessToken = await generatePayPalAccessToken();
+        
+        // Note: transactionId here should be the valid PayPal Capture ID
+        const refundResponse = await fetch(`${PAYPAL_API_BASE}/v2/payments/captures/${transactionId}/refund`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            amount: { value: "50.00", currency_code: "CAD" } // Matches the 50.00 deposit
+          })
+        });
+
+        if (!refundResponse.ok) {
+            const errorDetails = await refundResponse.json();
+            console.error("PayPal Refund failed:", errorDetails);
+            res.status(500).json({ error: "Refund failed via PayPal. Cancellation aborted.", details: errorDetails });
+            return;
+        }
+        console.log(`[REFUND] Successful for transaction ${transactionId}`);
+      } catch (refundErr) {
+        console.error("Error connecting to PayPal:", refundErr);
+        res.status(500).json({ error: "Failed to connect to payment gateway for refund." });
+        return;
+      }
+    }
+
+    // 2. Delete the associated booking index from Firestore (schedule collection)
+    await db.runTransaction(async (t) => {
+      const slotRef = db.collection("schedule").doc(documentId);
+      const doc = await t.get(slotRef);
+
+      if (!doc.exists) {
+        throw new Error("DOCUMENT_NOT_FOUND");
+      }
+
+      let currentBookings = doc.data()?.bookings || [];
+      
+      if (bookingIndex < 0 || bookingIndex >= currentBookings.length) {
+        throw new Error("INVALID_INDEX");
+      }
+
+      // Remove the exact booking index
+      currentBookings.splice(bookingIndex, 1);
+
+      // Update the document with the modified array
+      t.update(slotRef, { bookings: currentBookings });
+    });
+
+    console.log(`[CANCEL] Booking cancelled for ${documentId} at index ${bookingIndex}`);
+
+    // =====================================================================
+    // 3. IMMEDIATELY SYNC & RE-OPTIMIZE ADMIN_WORKERSSCHEDULE
+    // =====================================================================
+    const dateStr = originalDate.substring(0, 10);
+    
+    (async () => {
+      try {
+        const scheduleRef = db.collection("admin_workersSchedule").doc(dateStr);
+        const scheduleDoc = await scheduleRef.get();
+
+        if (scheduleDoc.exists) {
+          const existingBookings = scheduleDoc.data()?.assignedRoute || [];
+          const routeData = await generateDailyRoute(dateStr); // Heavy OSRM call
+
+          const statusMap: Record<string, string> = {};
+          existingBookings.forEach((b: any) => {
+            const tId = b.transactionId;
+            const cAt = b.createdAt?.toString(); 
+            if (b.status) {
+              if (tId) statusMap[tId] = b.status;
+              if (cAt) statusMap[cAt] = b.status;
+            }
+          });
+
+          const preservedRoute = routeData.route.map((newBooking: any) => {
+            const tId = newBooking.transactionId;
+            const cAt = newBooking.createdAt?.toString();
+            const existingStatus = (tId && statusMap[tId]) || (cAt && statusMap[cAt]);
+            return { ...newBooking, status: existingStatus || "pending" };
+          });
+
+          await scheduleRef.set({
+            assignedRoute: preservedRoute,
+            coordinate_route: routeData.coordinate_route,
+            distance: routeData.distance,
+            straightLineTotal: routeData.straightLineTotal,
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+          
+          console.log(`[BG-SYNC] Worker route successfully re-optimized for ${dateStr}.`);
+        }
+      } catch (bgError) {
+        console.error("❌ Background route optimization failed:", bgError);
+      }
+    })();
+
+    broadcastUpdate({ type: "REFRESH_SCHEDULE", documentId });
+
+    res.status(200).json({ 
+      success: true, 
+      message: "Booking cancelled successfully. " + (!isToday ? "Refund processed." : "No refund issued.") 
+    });
+
+  } catch (error: any) {
+    console.error("Cancellation error:", error);
+    if (error.message === "DOCUMENT_NOT_FOUND" || error.message === "INVALID_INDEX") {
+       res.status(404).json({ error: "Booking not found." });
+       return;
+    }
+    res.status(500).json({ error: "Internal server error during cancellation." });
+  }
+});
+
+// =========================================================
+// 7. ADMIN API ROUTES (For managing workers and schedules, not exposed to public)
+// =========================================================
+
+
 app.post("/api/admin/create-worker", async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, fullName, phoneNumber } = req.body;
@@ -571,7 +759,7 @@ app.post("/api/admin/assign-schedule", async (req: Request, res: Response): Prom
 
 
 // =========================================================
-// 7. BACKGROUND CRON TASKS
+// 8. BACKGROUND CRON TASKS
 // =========================================================
 
 // ROUTE SYNC & OPTIMIZATION (Runs Every 15 Minutes)
@@ -753,7 +941,7 @@ cron.schedule("10 22 * * *", async () => {
 });
 
 // =========================================================
-// 8. SERVER START
+// 9. SERVER START
 // =========================================================
 
 const isProd = process.env.NODE_ENV === "production";

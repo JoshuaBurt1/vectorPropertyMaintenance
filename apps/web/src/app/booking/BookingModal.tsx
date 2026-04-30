@@ -156,7 +156,7 @@ export default function BookingModal({
                 </p>
               )}
               {isAddressValid && !hasPropertyNumber && (
-                <p className="text-xs text-orange-600 mt-1.5 font-medium">
+                <p className="text-xs text-red-500 mt-1.5 font-medium">
                   ⚠️ Please include your house/property number at the start of the address.
                 </p>
               )}
