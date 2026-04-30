@@ -3,8 +3,11 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { PayPalScriptProvider, PayPalButtons } from "@paypal/react-paypal-js";
+import Image from "next/image";
+import { PayPalScriptProvider } from "@paypal/react-paypal-js";
 import dynamic from 'next/dynamic';
+import BookingModal from "./BookingModal";
+import ScheduleGrid, { TimeSlot, Booking, SearchedBooking } from "./ScheduleGrid";
 import 'leaflet/dist/leaflet.css';
 
 const API_BASE = typeof window !== "undefined" && window.location.hostname === "localhost"
@@ -20,28 +23,12 @@ const MapView = dynamic(() => import("./BookingMap"), {
   loading: () => <div className="h-full w-full bg-zinc-100 animate-pulse" />
 });
 
-// Outside or inside component body:
 const getStartOfWeek = (date: Date) => {
   const d = new Date(date);
   d.setDate(d.getDate() - d.getDay());
   d.setHours(0, 0, 0, 0);
   return d;
 };
-
-const SkeletonSlot = () => (
-  <div className="p-4 border border-zinc-200 rounded-xl h-24 bg-white animate-pulse flex flex-col justify-between">
-    <div className="h-4 w-20 bg-zinc-200 rounded" />
-    <div className="h-3 w-16 bg-zinc-100 rounded" />
-  </div>
-);
-
-type TimeSlot = "Morning (8AM - 12PM)" | "Afternoon (12PM - 4PM)" | "Evening (4PM - 8PM)";
-
-interface Booking {
-  date: string;
-  timeSlot: string;
-  count: number;
-}
 
 // Haversine formula
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -74,6 +61,11 @@ export default function BookingPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [showWarmingUp, setShowWarmingUp] = useState(false);
+
+  // Search States
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchedBookings, setSearchedBookings] = useState<SearchedBooking[]>([]);
 
   // Map & Location States
   const [isMapVisible, setIsMapVisible] = useState(false);
@@ -251,6 +243,43 @@ export default function BookingPage() {
     }
   };
 
+  // User Search Functionality
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      setSearchedBookings([]);
+      return;
+    }
+    
+    setIsSearching(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(searchQuery)}`);
+      if (response.ok) {
+        const results = await response.json();
+        if (results && results.length > 0) {
+          // Sort results chronologically
+          const sorted = results.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+          
+          // Get earliest date found and set the calendar to that week
+          const earliestBooking = sorted[0];
+          setCurrentWeekStart(getStartOfWeek(new Date(earliestBooking.date)));
+          
+          // Save all matching slots to be highlighted by the Grid component
+          setSearchedBookings(sorted);
+        } else {
+          alert("No bookings found for that information.");
+          setSearchedBookings([]);
+        }
+      } else {
+        alert("Search failed. Please try again.");
+      }
+    } catch (error) {
+      console.error("Search error:", error);
+      alert("Error reaching the database.");
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
   // Geocoding Logic: Universal function for both forward and reverse geocoding
   const handleGeocode = async (query: string, isReverse = false) => {
     setIsGeocoding(true);
@@ -311,12 +340,6 @@ export default function BookingPage() {
     isPhoneValid &&
     formData.email.includes("@");
 
-  const getSlotFullness = (day: Date, time: string) => {
-    const dayString = day.toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
-    const slot = bookedSlots.find(b => b.date === dayString && b.timeSlot === time);
-    return slot ? slot.count : 0;
-  };
-
   return (
     <PayPalScriptProvider 
       options={{ 
@@ -325,371 +348,155 @@ export default function BookingPage() {
         intent: "capture"
       }}
     >
-      <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans p-8">
-        <div className="max-w-6xl mx-auto">
-          <Link 
-            href="/" 
-            className="inline-flex items-center text-sm font-medium text-zinc-500 hover:text-black mb-8 transition-colors"
-          >
-            ← Back to Home
-          </Link>
+      <div className="min-h-screen flex flex-col bg-white text-zinc-900 font-sans">
+        
+        {/* HEADER */}
+        <nav className="flex items-center justify-between px-8 py-6 border-b border-zinc-100 bg-white">
+          <div className="flex grow items-center gap-4">
+            <Image 
+              src="/assets/icon.png"
+              alt="Vector Property Maintenance Logo" 
+              width={48} 
+              height={48} 
+              className="rounded-sm w-12 h-12 object-contain" 
+              priority
+            />
+            <h1 className="text-2xl font-bold tracking-tighter uppercase">
+              Vector Property Maintenance
+            </h1>
+          </div>
 
-          <header className="mb-10 flex justify-between items-start">
-            <div>
-              <h1 className="text-4xl font-bold tracking-tight mb-2">Schedule Service</h1>
-              <p className="text-zinc-600">Click on a schedule block to book your time.</p>
-            </div>
-            
-            {showWarmingUp && (
-              <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border border-slate-200 text-slate-700 rounded-full text-sm animate-pulse">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-slate-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-slate-500"></span>
-                </span>
-                Server Warming Up...
-              </div>
-            )}
-          </header>
-
-          <div className="flex items-center justify-between mb-6 bg-white p-4 rounded-xl border border-zinc-200 shadow-sm">
-            <button 
-              onClick={() => shiftWeek(-1)} 
-              disabled={isAtMinWeek}
-              className={`p-2 rounded-lg transition-colors ${
-                isAtMinWeek 
-                  ? "opacity-0 cursor-default"
-                  : "hover:bg-zinc-100 text-zinc-900"
-              }`}
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <Link 
+              href="/"
+              className="bg-black text-white px-6 py-2.5 rounded-full text-sm font-semibold hover:bg-zinc-800 transition-all active:scale-95"
             >
-              ← Previous Week
-            </button>
-            <span className="font-semibold text-lg">
-              Week of {currentWeekStart.toLocaleDateString('en-CA', { month: 'long', day: 'numeric', year: 'numeric' })}, {currentTime} ({userTimezone})
-            </span>
-            <button onClick={() => shiftWeek(1)} className="p-2 hover:bg-zinc-100 rounded-lg">
-              Next Week →
-            </button>
+              Back to Home
+            </Link>
+            
+            <p className="text-zinc-500 text-xs">
+              Have a custom project? {" "}
+              <a 
+                href="mailto:VectorPM@gmail.com" 
+                className="text-zinc-900 font-medium underline underline-offset-4 hover:text-zinc-600 transition-colors"
+              >
+                VectorPM@gmail.com
+              </a>
+            </p>
           </div>
+        </nav>
 
-          <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
-            {days.map((day, index) => (
-              <div key={index} className="flex flex-col gap-3">
-                <div className="text-center pb-2 border-b border-zinc-200">
-                  <div className="font-bold">{day.toLocaleDateString('en-CA', { weekday: 'short' })}</div>
-                  <div className="text-sm text-zinc-500">{day.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}</div>
-                </div>
-                
-                {timeSlots.map((time) => {
-                  if (isLoading) return <SkeletonSlot key={time} />;
+        {/* MAIN BODY */}
+        <main className="grow bg-white p-8">
+          <div className="max-w-6xl mx-auto">
 
-                  // Compare YYYY-MM-DD strings localized to Toronto
-                  const dayStrToronto = day.toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
-                  const todayStrToronto = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
-
-                  // A day is in the past if its string is alphabetically less than today's
-                  const isPastDay = dayStrToronto < todayStrToronto;
-                  const isToday = dayStrToronto === todayStrToronto;
-
-                  const estTimezone = parseInt(new Intl.DateTimeFormat('en-US', {
-                    hour: 'numeric',
-                    hour12: false,
-                    timeZone: 'America/Toronto'
-                  }).format(new Date()));
-                  
-                  let isPastSlot = false;
-
-                  if (isToday) {
-                    if (time.startsWith("Morning") && estTimezone >= 8) isPastSlot = true;
-                    if (time.startsWith("Afternoon") && estTimezone >= 12) isPastSlot = true;
-                    if (time.startsWith("Evening") && estTimezone >= 16) isPastSlot = true;
-                  }
-
-                  const fullnessCount = getSlotFullness(day, time);
-                  const isFullyBooked = fullnessCount >= 2;
-                  const isUnavailable = isFullyBooked || isPastDay || isPastSlot;
-
-                  const isPast = isPastDay || isPastSlot;
-                  const isRecentlyBooked = justBooked?.date === dayStrToronto && justBooked?.time === time;
-
-                  let statusLabel = "0% Full";
-                  let fullnessClass = "text-emerald-600";
-
-                  if (isRecentlyBooked) {
-                    statusLabel = "Booked by You!";
-                    fullnessClass = "text-blue-700 font-bold";
-                  } else if (isPast) {
-                    statusLabel = "Unavailable";
-                    fullnessClass = "text-zinc-400";
-                  } else if (isFullyBooked) {
-                    statusLabel = "100% Full";
-                    fullnessClass = "text-blue-600 font-semibold";
-                  } else if (fullnessCount === 1) {
-                    statusLabel = "50% Full";
-                    fullnessClass = "text-teal-600";
-                  } else {
-                    statusLabel = "0% Full";
-                    fullnessClass = "text-emerald-600";
-                  }
-
-                  return (
-                    <button
-                      key={time}
-                      disabled={isUnavailable}
-                      onClick={() => handleBlockClick(day, time)}
-                      className={`p-4 text-left text-sm border rounded-xl h-24 flex flex-col justify-between transition-all ${
-                        isRecentlyBooked
-                          ? "bg-blue-50 border-blue-500 ring-2 ring-blue-500 shadow-md" // THE NEW BLUE HIGHLIGHT
-                          : isUnavailable 
-                            ? "bg-zinc-200/50 border-zinc-200 text-zinc-400 cursor-default" 
-                            : "bg-white border-zinc-200 hover:border-black hover:shadow-md"
-                      }`}
-                    >
-                      <span className={`font-medium ${(isPastDay || isPastSlot) ? "line-through text-zinc-400" : "text-zinc-700"}`}>
-                        {time.split(" ")[0]}
-                      </span>
-                      <div className="flex flex-col gap-1">
-                        <span className="text-xs opacity-75">
-                          {time.split(" ").slice(1).join(" ")}
-                        </span>
-                        <span className={`text-xs ${fullnessClass}`}>
-                          {statusLabel}
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })}
+            <header className="mb-10 flex flex-col md:flex-row md:justify-between md:items-end gap-6">
+              <div>
+                <h1 className="text-4xl font-bold tracking-tight mb-2">Schedule Service</h1>
+                <p className="text-zinc-600">Click on a schedule block to book your time.</p>
               </div>
-            ))}
-          </div>
-        </div>
 
-        {/* Booking Modal */}
-        {isModalOpen && selectedBlock && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-            <div className={`bg-white rounded-2xl shadow-2xl flex flex-col md:flex-row transition-all duration-500 ease-in-out ${isMapVisible ? 'max-w-4xl' : 'max-w-md'} w-full max-h-[90vh] overflow-hidden`}>
-              
-              {/* Dynamic Map Area */}
-              {isMapVisible && mounted && (
-                <div className="hidden md:block w-1/2 bg-zinc-100 relative">
-                  <MapView 
-                    userLocation={userLocation}
-                    homeBase={HOME_BASE}
-                    radius={MAX_RADIUS_KM}
-                  />
-                </div>
-              )}
-
-              {/* Form Area */}
-              <div className={`p-8 w-full ${isMapVisible ? 'md:w-1/2 overflow-y-auto' : 'overflow-y-auto'} relative z-10 bg-white`}>
-                <h2 className="text-2xl font-bold mb-1">Confirm Booking</h2>
-                <p className="text-sm text-zinc-500 mb-6">
-                  {selectedBlock.date.toLocaleDateString('en-CA')} • {selectedBlock.time}
-                </p>
-
-                <div className="flex flex-col gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Name</label>
+              <div className="flex flex-col items-end gap-3 w-full md:w-auto min-h-10 justify-center">
+                {showWarmingUp ? (
+                  /* 1. Display ONLY the Warming Up Indicator if true */
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 text-slate-700 rounded-full text-xs animate-pulse shadow-sm">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-slate-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-slate-500"></span>
+                    </span>
+                    Server Warming Up...
+                  </div>
+                ) : (
+                  /* 2. ELSE display the Search Bar */
+                  <div className="flex items-center gap-2 w-full md:w-auto">
                     <input
-                      required
                       type="text"
-                      className="w-full border border-zinc-300 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-black"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      placeholder="Find existing booking..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                      className="px-4 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black w-full md:w-64"
                     />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-1 justify-between">
-                      Address
-                      <button 
-                        onClick={getUserLocation}
-                        type="button"
-                        className="text-blue-600 hover:text-blue-800 text-xs font-semibold"
-                      >
-                        📍 Use My Location
-                      </button>
-                    </label>
-                    
-                    {/* 2. Forward Geocoding Search */}
-                    <div className="flex gap-2">
-                      <input
-                        required
-                        type="text"
-                        placeholder="Type address or click map..."
-                        className={`w-full border rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-black ${
-                          formData.address && !isAddressValid && isMapVisible ? 'border-red-500' : 'border-zinc-300'
-                        }`}
-                        onFocus={() => setIsMapVisible(true)}
-                        value={formData.address}
-                        onChange={(e) => {
-                          setFormData({ ...formData, address: e.target.value });
-                          setIsAddressValid(false); 
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleGeocode(formData.address);
-                          }
-                        }}
-                      />
-                      <button 
-                        type="button"
-                        onClick={() => handleGeocode(formData.address)}
-                        disabled={isGeocoding || !formData.address}
-                        className="bg-black text-white px-4 rounded-lg font-medium hover:bg-zinc-800 disabled:opacity-50 whitespace-nowrap"
-                      >
-                        {isGeocoding ? "..." : "Search"}
-                      </button>
-                    </div>
-                    
-                    {/* Address Validation Feedback */}
-                    {isMapVisible && formData.address && !isAddressValid && !isGeocoding && (
-                      <p className="text-xs text-red-500 mt-1.5 font-medium">
-                        Must verify an address within our 100km radius.
-                      </p>
-                    )}
-                    {isAddressValid && !hasPropertyNumber && (
-                      <p className="text-xs text-orange-600 mt-1.5 font-medium">
-                        ⚠️ Please include your house/property number at the start of the address.
-                      </p>
-                    )}
-                    {isAddressValid && !isGeocoding && (
-                      <p className="text-xs text-emerald-600 mt-1.5 font-medium">
-                        ✓ Address verified within service area
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Email Address</label>
-                    <input
-                      required
-                      type="email"
-                      placeholder="for your confirmation receipt"
-                      className="w-full border border-zinc-300 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-black"
-                      value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Phone Number</label>
-                    <input
-                      required
-                      type="tel"
-                      placeholder="(555) 555-5555"
-                      className={`w-full border rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-black ${
-                        formData.phone && !isPhoneValid ? 'border-red-500 bg-red-50' : 'border-zinc-300'
-                      }`}
-                      value={formData.phone}
-                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    />
-                    {formData.phone && !isPhoneValid && (
-                      <p className="text-xs text-red-500 mt-1.5 font-medium">
-                        Please enter a valid 10-digit phone number.
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Service Requirement</label>
-                    <select
-                      className="w-full border border-zinc-300 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-black"
-                      value={formData.service}
-                      onChange={(e) => setFormData({ ...formData, service: e.target.value })}
-                    >
-                      {services.map((s) => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="bg-zinc-50 p-4 rounded-lg mt-2 border border-zinc-200">
-                    <div className="flex justify-between text-sm">
-                      <span>Deposit Required:</span>
-                      <span className="font-bold">$50.00 CAD</span>
-                    </div>
-                  </div>
-
-                  {isSubmitting && (
-                    <p className="text-sm text-center text-zinc-500 my-2">Processing your booking...</p>
-                  )}
-
-                  <div className="mt-4 flex flex-col gap-3">
-                    {!isFormValid ? (
-                      <div className="text-center p-3 bg-zinc-100 text-zinc-500 rounded-lg text-sm border border-zinc-200">
-                        Please fill out Name, Email, and verify your Address to proceed.
-                      </div>
-                    ) : (
-                      <div className="min-h-37.5">
-                        <PayPalButtons
-                          style={{ layout: "vertical", shape: "rect" }}
-                          disabled={isSubmitting}
-                          createOrder={async () => {
-                            const response = await fetch(`${API_BASE}/api/paypal/create-order`, {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ serviceName: formData.service })
-                            });
-                            
-                            const orderData = await response.json();
-                            
-                            // Check for HTTP errors sent by our backend
-                            if (!response.ok) {
-                              console.error("Backend Error Detail:", orderData);
-                              throw new Error(orderData.error || "Failed to create PayPal order");
-                            }
-
-                            if (orderData.id) {
-                              return orderData.id;
-                            }
-                            
-                            throw new Error("Failed to create PayPal order: No ID returned");
-                          }}
-                          onApprove={async (data) => {
-                            try {
-                              const response = await fetch(`${API_BASE}/api/paypal/capture-order`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ orderID: data.orderID }),
-                              });
-                              
-                              const details = await response.json();
-
-                              if (!response.ok) {
-                                throw new Error(details.error || "Transaction failed to capture on server.");
-                              }
-
-                              if (details.status === "COMPLETED") {
-                                const transactionId = details.purchase_units[0].payments.captures[0].id;
-                                await handleBookingSubmission(transactionId); 
-                              } else {
-                                throw new Error(`Transaction was not completed. Status: ${details.status}`);
-                              }
-                              
-                            } catch (error) {
-                              console.error("PayPal Capture Error:", error);
-                              alert("Payment failed to capture. Please try again.");
-                            }
-                          }}
-                        />
-                      </div>
-                    )}
-                    
                     <button
-                      type="button"
-                      onClick={closeModal}
-                      disabled={isSubmitting}
-                      className="w-full py-2.5 border border-zinc-300 rounded-lg font-medium hover:bg-zinc-50 disabled:opacity-50"
+                      onClick={handleSearch}
+                      disabled={isSearching}
+                      className="px-6 py-2 bg-black text-white rounded-lg text-sm font-semibold hover:bg-zinc-800 transition-colors disabled:opacity-50 whitespace-nowrap"
                     >
-                      Cancel
+                      {isSearching ? "..." : "Search"}
                     </button>
                   </div>
-                </div>
+                )}
               </div>
+            </header>
+
+            {/* CONTROLS AREA (Week Navigation Only) */}
+            <div className="flex items-center justify-between mb-6 bg-white p-4 rounded-xl border border-zinc-200 shadow-sm">
+              <button 
+                onClick={() => shiftWeek(-1)} 
+                disabled={isAtMinWeek}
+                className={`p-2 rounded-lg transition-colors ${
+                  isAtMinWeek 
+                    ? "opacity-0 cursor-default"
+                    : "hover:bg-zinc-100 text-zinc-900"
+                }`}
+              >
+                ← Previous Week
+              </button>
+              <span className="font-semibold text-lg">
+                Week of {currentWeekStart.toLocaleDateString('en-CA', { month: 'long', day: 'numeric', year: 'numeric' })}, {currentTime} ({userTimezone})
+              </span>
+              <button onClick={() => shiftWeek(1)} className="p-2 hover:bg-zinc-100 rounded-lg">
+                Next Week →
+              </button>
             </div>
+
+            {/* Extracted Schedule Grid */}
+            <ScheduleGrid 
+              days={days}
+              timeSlots={timeSlots}
+              isLoading={isLoading}
+              bookedSlots={bookedSlots}
+              justBooked={justBooked}
+              searchedBookings={searchedBookings}
+              handleBlockClick={handleBlockClick}
+            />
+
           </div>
-        )}
+        </main>
+        
+        {/* FOOTER */}
+        <footer className="px-8 py-12 border-t border-zinc-100 text-center bg-white">
+          <p className="text-xs text-zinc-400 uppercase tracking-widest">
+            © {new Date().getFullYear()} Vector Property Maintenance
+          </p>
+        </footer>
+
+        {/* Extracted Booking Modal */}
+        <BookingModal
+          isOpen={isModalOpen}
+          selectedBlock={selectedBlock}
+          closeModal={closeModal}
+          isMapVisible={isMapVisible}
+          setIsMapVisible={setIsMapVisible}
+          mounted={mounted}
+          userLocation={userLocation}
+          HOME_BASE={HOME_BASE}
+          MAX_RADIUS_KM={MAX_RADIUS_KM}
+          MapView={MapView}
+          formData={formData}
+          setFormData={setFormData}
+          getUserLocation={getUserLocation}
+          handleGeocode={handleGeocode}
+          isGeocoding={isGeocoding}
+          isAddressValid={isAddressValid}
+          hasPropertyNumber={hasPropertyNumber}
+          isPhoneValid={isPhoneValid}
+          services={services}
+          isSubmitting={isSubmitting}
+          isFormValid={isFormValid}
+          handleBookingSubmission={handleBookingSubmission}
+          API_BASE={API_BASE}
+        />
       </div>
     </PayPalScriptProvider>
   );
