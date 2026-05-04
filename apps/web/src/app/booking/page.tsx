@@ -576,7 +576,7 @@ export default function BookingPage() {
 
         {/* Cancellation Modal */}
         {cancelModalOpen && bookingToCancel && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="fixed inset-0 z-100 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
             <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full relative">
               
               {/* Header matched to Booking Modal style */}
