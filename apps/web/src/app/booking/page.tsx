@@ -326,13 +326,19 @@ export default function BookingPage() {
     }
   };
 
-  // Geocoding Logic: Universal function for both forward and reverse geocoding via Render proxy
   const handleGeocode = async (query: string, isReverse = false) => {
     setIsGeocoding(true);
     const url = `${API_BASE}/api/geocode?q=${encodeURIComponent(query)}`;
     
     try {
       const response = await fetch(url);
+      
+      // Check for backend HTTP errors (401, 404, 500, etc.)
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server error (Status: ${response.status})`);
+      }
+
       const data = await response.json();
       
       if (data.results && data.results.length > 0) {
@@ -349,9 +355,10 @@ export default function BookingPage() {
         alert("Could not find this location.");
         setIsAddressValid(false);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Geocoding failed:", err);
-      alert("Address search failed. Please try again.");
+      alert(`Geocoding error: ${err.message || "Please try again."}`);
+      setIsAddressValid(false);
     } finally {
       setIsGeocoding(false);
       setIsMapVisible(true);
