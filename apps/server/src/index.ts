@@ -95,9 +95,9 @@ app.get("/api/geocode", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Address query parameter 'q' is required." });
     }
 
-    const apiKey = process.env.OPENCAGE_API_KEY;
+    const apiKey = process.env.NEXT_PUBLIC_OPENCAGE_API_KEY;
     if (!apiKey) {
-      console.error("❌ OPENCAGE_API_KEY is not set in Render environment variables.");
+      console.error("❌ NEXT_PUBLIC_OPENCAGE_API_KEY is not set in Render environment variables.");
       return res.status(500).json({ error: "Geocoding service key missing on server." });
     }
 
