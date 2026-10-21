@@ -1,4 +1,3 @@
-// web/src/app/booking/page.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -14,7 +13,6 @@ const API_BASE = typeof window !== "undefined" && window.location.hostname === "
   ? "http://localhost:8080"
   : "https://vectorpropertymaintenance.onrender.com";
 
-const OPENCAGE_API_KEY = process.env.NEXT_PUBLIC_OPENCAGE_API_KEY;
 const HOME_BASE = { lat: 44.3894, lng: -79.6903 }; 
 const MAX_RADIUS_KM = 75;
 
@@ -204,28 +202,28 @@ export default function BookingPage() {
   };
 
   const handleBookingSubmission = async (transactionId: string) => {
-  if (!selectedBlock) return;
-  setIsSubmitting(true);
+    if (!selectedBlock) return;
+    setIsSubmitting(true);
 
-  try {
-    const response = await fetch(`${API_BASE}/api/book`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...formData,
-        date: selectedBlock.date.toLocaleDateString('en-CA', { timeZone: 'America/Toronto' }),
-        timeSlot: selectedBlock.time,
-        transactionId,
-        location: userLocation ? [userLocation.lat, userLocation.lng] : null
-      }),
-    });
+    try {
+      const response = await fetch(`${API_BASE}/api/book`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...formData,
+          date: selectedBlock.date.toLocaleDateString('en-CA', { timeZone: 'America/Toronto' }),
+          timeSlot: selectedBlock.time,
+          transactionId,
+          location: userLocation ? [userLocation.lat, userLocation.lng] : null
+        }),
+      });
 
       const result = await response.json();
 
       if (!response.ok) {
         if (response.status === 409) {
-            alert("CRITICAL: Payment went through but the slot was taken. Please contact us immediately for a refund or manual booking.");
-            return;
+          alert("CRITICAL: Payment went through but the slot was taken. Please contact us immediately for a refund or manual booking.");
+          return;
         }
         throw new Error(result.error || "Failed to book");
       }
@@ -262,14 +260,9 @@ export default function BookingPage() {
       if (response.ok) {
         const results = await response.json();
         if (results && results.length > 0) {
-          // Sort results chronologically
           const sorted = results.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
-          
-          // Get earliest date found and set the calendar to that week
           const earliestBooking = sorted[0];
           setCurrentWeekStart(getStartOfWeek(new Date(earliestBooking.date)));
-          
-          // Save all matching slots to be highlighted by the Grid component
           setSearchedBookings(sorted);
         } else {
           alert("No bookings found for that information.");
@@ -289,7 +282,6 @@ export default function BookingPage() {
   const handleCancelBooking = async () => {
     if (!bookingToCancel) return;
 
-    // Confirming inside the function as a double-check
     const isConfirmed = window.confirm(
       "Are you sure you want to cancel this booking? If the booking is not for today, your $50 deposit will be refunded."
     );
@@ -314,7 +306,6 @@ export default function BookingPage() {
       if (response.ok) {
         alert(data.message || "Booking cancelled successfully.");
 
-        // Remove from the local search list
         setSearchedBookings((prev) =>
           prev.filter(
             (b) => !(b.documentId === bookingToCancel.documentId && b.bookingIndex === bookingToCancel.bookingIndex)
@@ -335,16 +326,16 @@ export default function BookingPage() {
     }
   };
 
-  // Geocoding Logic: Universal function for both forward and reverse geocoding
+  // Geocoding Logic: Universal function for both forward and reverse geocoding via Render proxy
   const handleGeocode = async (query: string, isReverse = false) => {
     setIsGeocoding(true);
-    const url = `https://api.opencagedata.com/geocode/v1/json?q=${encodeURIComponent(query)}&key=${OPENCAGE_API_KEY}`;
+    const url = `${API_BASE}/api/geocode?q=${encodeURIComponent(query)}`;
     
     try {
       const response = await fetch(url);
       const data = await response.json();
       
-      if (data.results.length > 0) {
+      if (data.results && data.results.length > 0) {
         const result = data.results[0];
         const lat = result.geometry.lat;
         const lng = result.geometry.lng;
@@ -440,10 +431,8 @@ export default function BookingPage() {
                 <h1 className="text-4xl font-bold tracking-tight mb-2">Schedule Service</h1>
                 <p className="text-zinc-600">Click on a schedule block to book your time.</p>
               </div>
-              {/* Right Side: Conditional Search Bar or Warming Up Indicator */}
               <div className="relative flex flex-col items-end gap-2 w-full md:w-auto">
                 {showWarmingUp ? (
-                  /* --- REPLACEMENT: Warming Up Indicator --- */
                   <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border border-slate-200 text-slate-700 rounded-full text-sm animate-pulse">
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-slate-400 opacity-75"></span>
@@ -452,7 +441,6 @@ export default function BookingPage() {
                     Server Warming Up...
                   </div>
                 ) : (
-                  /* --- ORIGINAL: Search Bar UI --- */
                   <>
                     <div className="flex items-center gap-2 w-full md:w-auto">
                       <input
@@ -472,7 +460,6 @@ export default function BookingPage() {
                       </button>
                     </div>
 
-                    {/* Display found results under the search bar */}
                     {searchedBookings.length > 0 && (
                       <div className="absolute top-full right-0 mt-2 w-full md:w-72 bg-white border border-zinc-200 shadow-xl rounded-lg p-3 z-50 text-sm flex flex-col gap-2">
                         <div className="flex justify-between items-center border-b border-zinc-100 pb-2 mb-1">
@@ -519,7 +506,7 @@ export default function BookingPage() {
                                 </span>                             
                                 <span className="text-xs text-zinc-500 mt-1">{fullTimeRange}</span>    
                                 <span className="text-xs text-zinc-500 mt-1">
-                                  {booking.service} • {booking.name}
+                                  {booking.name}
                                 </span>
                               </div>
                             );
@@ -532,7 +519,7 @@ export default function BookingPage() {
               </div>
             </header>
 
-            {/* CONTROLS AREA (Week Navigation Only) */}
+            {/* CONTROLS AREA */}
             <div className="flex items-center justify-between mb-6 bg-white p-4 rounded-xl border border-zinc-200 shadow-sm">
               <button 
                 onClick={() => shiftWeek(-1)} 
@@ -553,7 +540,7 @@ export default function BookingPage() {
               </button>
             </div>
 
-            {/* Extracted Schedule Grid */}
+            {/* Schedule Grid */}
             <ScheduleGrid 
               days={days}
               timeSlots={timeSlots}
@@ -578,14 +565,11 @@ export default function BookingPage() {
         {cancelModalOpen && bookingToCancel && (
           <div className="fixed inset-0 z-100 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
             <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full relative">
-              
-              {/* Header matched to Booking Modal style */}
               <h2 className="text-2xl font-bold mb-1 text-zinc-900">Cancel Booking?</h2>
               <p className="text-sm text-zinc-500 mb-6">
-                {bookingToCancel.service} • {bookingToCancel.date}
+                {bookingToCancel.date}
               </p>
 
-              {/* Policy Box - Matched to the "Deposit Required" box style */}
               <div className="bg-zinc-50 p-4 rounded-lg mb-6 border border-zinc-200">
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-zinc-600 font-medium">Refund Status:</span>
@@ -605,7 +589,6 @@ export default function BookingPage() {
                 Are you sure you want to cancel your appointment? This action cannot be undone and will remove your reserved time slot from our calendar.
               </p>
               
-              {/* Buttons matched to the Booking Modal "Submit/Cancel" layout */}
               <div className="flex flex-col gap-3">
                 <button
                   onClick={handleCancelBooking}
@@ -628,7 +611,7 @@ export default function BookingPage() {
           </div>
         )}
 
-        {/* Extracted Booking Modal */}
+        {/* Booking Modal */}
         <BookingModal
           isOpen={isModalOpen}
           selectedBlock={selectedBlock}
