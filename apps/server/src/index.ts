@@ -1,4 +1,4 @@
-//server/src/index.ts
+// apps/server/src/index.ts (or server/src/index.ts)
 import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors from "cors";
@@ -85,9 +85,46 @@ app.use(cors({
   credentials: true,
 }));
 
+// =========================================================
+// 4. OPENCAGE GEOCODING PROXY ENDPOINT
+// =========================================================
+app.get("/api/geocode", async (req: Request, res: Response) => {
+  try {
+    const query = req.query.q as string;
+    if (!query) {
+      return res.status(400).json({ error: "Address query parameter 'q' is required." });
+    }
+
+    const apiKey = process.env.OPENCAGE_API_KEY;
+    if (!apiKey) {
+      console.error("❌ OPENCAGE_API_KEY is not set in Render environment variables.");
+      return res.status(500).json({ error: "Geocoding service key missing on server." });
+    }
+
+    const geocodeUrl = `https://api.opencagedata.com/geocode/v1/json?q=${encodeURIComponent(query)}&key=${apiKey}`;
+    
+    const response = await fetch(geocodeUrl, {
+      method: "GET",
+      headers: {
+        "User-Agent": "VectorPropertyMaintenance/1.0 (contact@vectorpm.ca)",
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return res.status(response.status).json({ error: errorText });
+    }
+
+    const data = await response.json();
+    return res.json(data);
+  } catch (error) {
+    console.error("❌ Error proxying geocode request:", error);
+    return res.status(500).json({ error: "Internal server error during geocoding." });
+  }
+});
 
 // =========================================================
-// 4. GLOBAL HELPERS & PAYPAL
+// 5. GLOBAL HELPERS & PAYPAL
 // =========================================================
 const getTodayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
 
@@ -107,7 +144,7 @@ async function generatePayPalAccessToken() {
 }
 
 // =========================================================
-// 5. ROUTE OPTIMIZATION LOGIC
+// 6. ROUTE OPTIMIZATION LOGIC
 // =========================================================
 const HOME_BASE = { lat: 44.3894, lng: -79.6903 };
 
